@@ -1,3 +1,4 @@
+
 "use client";
 
 import React, { useState, useCallback } from 'react';
@@ -22,14 +23,14 @@ export function ResumeUploader({ onUpload, disabled }: ResumeUploaderProps) {
   const onDrop = useCallback((acceptedFiles: File[]) => {
     if (acceptedFiles && acceptedFiles.length > 0) {
       const selectedFile = acceptedFiles[0];
-      if (selectedFile.type === 'text/plain' || selectedFile.name.endsWith('.txt')) {
+      if (selectedFile.type === 'text/plain' || selectedFile.name.endsWith('.txt') || selectedFile.type === 'application/pdf' || selectedFile.name.endsWith('.pdf')) {
         setFile(selectedFile);
         setError(null);
       } else {
-        setError('Invalid file type. Please upload a .txt file.');
+        setError('Invalid file type. Please upload a .txt or .pdf file.');
         toast({
           title: 'Invalid File Type',
-          description: 'Please upload a .txt file. PDF/DOCX support is limited for rewriting.',
+          description: 'Please upload a .txt or .pdf file.',
           variant: 'destructive',
         });
         setFile(null);
@@ -39,7 +40,10 @@ export function ResumeUploader({ onUpload, disabled }: ResumeUploaderProps) {
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
-    accept: { 'text/plain': ['.txt'] },
+    accept: { 
+      'text/plain': ['.txt'],
+      'application/pdf': ['.pdf'] 
+    },
     multiple: false,
     disabled: disabled || isProcessing,
   });
@@ -53,7 +57,11 @@ export function ResumeUploader({ onUpload, disabled }: ResumeUploaderProps) {
     setError(null);
 
     try {
-      const textContent = await file.text();
+      // For PDF files, textContent might not be directly extractable here or relevant in the same way.
+      // The data URI will be the primary content passed to the AI.
+      // We'll provide an empty string for textContent for PDFs, or the actual text for .txt files.
+      const textContent = (file.type === 'text/plain' || file.name.endsWith('.txt')) ? await file.text() : '';
+      
       const reader = new FileReader();
       reader.onload = (event) => {
         if (event.target?.result) {
@@ -85,7 +93,7 @@ export function ResumeUploader({ onUpload, disabled }: ResumeUploaderProps) {
       <CardHeader>
         <CardTitle className="text-2xl">Upload Your Resume</CardTitle>
         <CardDescription>
-          Please upload your resume as a <strong>.txt</strong> file. 
+          Please upload your resume as a <strong>.txt</strong> or <strong>.pdf</strong> file. 
           This ensures accurate parsing and rewriting.
         </CardDescription>
       </CardHeader>
@@ -101,13 +109,13 @@ export function ResumeUploader({ onUpload, disabled }: ResumeUploaderProps) {
           {isDragActive ? (
             <p className="text-primary">Drop the file here...</p>
           ) : (
-            <p className="text-muted-foreground">Drag & drop your .txt resume here, or click to select</p>
+            <p className="text-muted-foreground">Drag & drop your .txt or .pdf resume here, or click to select</p>
           )}
         </div>
         {file && (
           <div className="flex items-center justify-center p-3 bg-muted rounded-md text-sm">
             <FileText className="h-5 w-5 mr-2 text-primary" />
-            <span>Selected: {file.name}</span>
+            <span>Selected: {file.name} ({file.type})</span>
           </div>
         )}
         {error && <p className="text-sm text-destructive text-center">{error}</p>}
