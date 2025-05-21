@@ -11,9 +11,11 @@ import {ai} from '@/ai/genkit';
 import {z} from 'genkit';
 
 const RewriteResumeInputSchema = z.object({
-  resumeText: z
+  resumeDataUri: z
     .string()
-    .describe('The text content of the resume to be rewritten.'),
+    .describe(
+      "The original resume file, as a data URI that must include a MIME type and use Base64 encoding. Expected format: 'data:<mimetype>;base64,<encoded_data>'."
+    ),
   interviewData: z
     .string()
     .describe('Data from the voice interview, to be used to rewrite the resume.'),
@@ -39,8 +41,8 @@ const prompt = ai.definePrompt({
 
   Based on the provided resume and interview data, rewrite the resume to increase its chances of passing through screening software.
 
-  Resume:
-  {{resumeText}}
+  Original Resume:
+  {{media url=resumeDataUri}}
 
   Interview Data:
   {{interviewData}}

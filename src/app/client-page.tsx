@@ -173,9 +173,9 @@ export default function OppyAiClientPage() {
   };
 
   const handleRewriteResume = async (interviewSummary: string) => {
-    if (!resumeTextContent) {
-      setError("Original resume text not found. Please re-upload.");
-      toast({ title: "Error", description: "Original resume text not found.", variant: "destructive" });
+    if (!resumeDataUri) { // Changed check from resumeTextContent to resumeDataUri
+      setError("Original resume data not found. Please re-upload."); // Updated error message
+      toast({ title: "Error", description: "Original resume data not found. Please re-upload.", variant: "destructive" });
       setCurrentStep('upload');
       return;
     }
@@ -184,8 +184,8 @@ export default function OppyAiClientPage() {
     setError(null);
     try {
       const input: RewriteResumeInput = {
-        resumeText: resumeTextContent,
-        interviewData: interviewSummary, // Pass the conversation summary
+        resumeDataUri: resumeDataUri, // Pass resumeDataUri
+        interviewData: interviewSummary, 
       };
       const result = await rewriteResume(input);
       setRewrittenResume(result);
@@ -275,10 +275,11 @@ export default function OppyAiClientPage() {
       case 'rewrite': 
          return <p>Preparing to rewrite...</p>; 
       case 'review':
-        if (!rewrittenResume || !resumeTextContent) return <p>Error: Rewritten data not available. Please <Button variant="link" onClick={handleStartOver}>start over</Button>.</p>;
+        if (!rewrittenResume) return <p>Error: Rewritten data not available. Please <Button variant="link" onClick={handleStartOver}>start over</Button>.</p>;
+        // originalResumeText will be empty for PDFs, ResumeEditor will handle displaying it or a message
         return (
           <ResumeEditor
-            originalResumeText={resumeTextContent}
+            originalResumeText={resumeTextContent} 
             rewrittenResumeOutput={rewrittenResume}
             onStartOver={handleStartOver}
           />
