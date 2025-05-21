@@ -5,54 +5,55 @@ import type { ParseResumeInput, ParseResumeOutput } from '@/ai/flows/parse-resum
 import { parseResume } from '@/ai/flows/parse-resume';
 import type { RewriteResumeInput, RewriteResumeOutput } from '@/ai/flows/rewrite-resume';
 import { rewriteResume } from '@/ai/flows/rewrite-resume';
+import type { ConductInterviewInput, ConductInterviewOutput, ChatMessage as GenkitChatMessage } from '@/ai/flows/conduct-interview-flow';
+import { conductInterview } from '@/ai/flows/conduct-interview-flow';
+
 import { ResumeUploader } from '@/components/resume-uploader';
 import { ParsedResumeDisplay } from '@/components/parsed-resume-display';
-import { InterviewInput } from '@/components/interview-input';
+import { InterviewInput, UIChatMessage } from '@/components/interview-input';
 import { ResumeEditor } from '@/components/resume-editor';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
 import { useToast } from '@/hooks/use-toast';
-import { Rocket, Loader2, FileWarning } from 'lucide-react';
-import React, { useState, useEffect } from 'react';
+import { Rocket, Loader2, FileWarning, MessageSquare } from 'lucide-react';
+import React, { useState, useEffect, useCallback } from 'react';
 
 type Step = 'upload' | 'parse' | 'interview' | 'rewrite' | 'review';
 
-export default function ResumeBoostClientPage() {
+export default function OppyAiClientPage() {
   const [currentStep, setCurrentStep] = useState<Step>('upload');
   const [resumeFile, setResumeFile] = useState<File | null>(null);
   const [resumeTextContent, setResumeTextContent] = useState<string>('');
   const [resumeDataUri, setResumeDataUri] = useState<string>('');
   
   const [parsedData, setParsedData] = useState<ParseResumeOutput | null>(null);
-  const [interviewData, setInterviewData] = useState<string>('');
+  const [chatHistory, setChatHistory] = useState<UIChatMessage[]>([]);
   const [rewrittenResume, setRewrittenResume] = useState<RewriteResumeOutput | null>(null);
   
-  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [isLoading, setIsLoading] = useState<boolean>(false); // For major step transitions
+  const [isSendingMessage, setIsSendingMessage] = useState<boolean>(false); // For chat message sending
   const [loadingMessage, setLoadingMessage] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
 
   const { toast } = useToast();
-
-  // For progress bar simulation
   const [progress, setProgress] = useState(0);
 
   useEffect(() => {
     let timer: NodeJS.Timeout;
     if (isLoading) {
-      setProgress(0); // Reset progress
-      let currentProgress = 0;
+      setProgress(0); 
+      let currentProgressVal = 0;
       timer = setInterval(() => {
-        currentProgress += 10;
-        if (currentProgress > 100) currentProgress = 100; // Cap at 100 during loading
-        setProgress(currentProgress);
+        currentProgressVal += 10;
+        if (currentProgressVal > 100) currentProgressVal = 100; 
+        setProgress(currentProgressVal);
       }, 200);
     } else {
-      setProgress(100); // Set to 100 when loading finishes
+      setProgress(100); 
     }
     return () => clearInterval(timer);
   }, [isLoading]);
-
 
   const handleResumeUpload = (file: File, textContent: string, dataUri: string) => {
     setResumeFile(file);
@@ -71,28 +72,106 @@ export default function ResumeBoostClientPage() {
       const input: ParseResumeInput = { resumeDataUri: dataUri };
       const result = await parseResume(input);
       setParsedData(result);
-      // Store original text if parseResume doesn't return it (which it doesn't)
-      // We already have it in resumeTextContent
       setCurrentStep('interview');
-      toast({ title: "Resume Parsed!", description: "Key information extracted successfully.", variant: "default" });
+      toast({ title: "Resume Parsed!", description: "Key information extracted. Let's chat about it.", variant: "default" });
     } catch (e: any) {
       console.error("Error parsing resume:", e);
       setError("Failed to parse resume. Please try again. " + e.message);
       toast({ title: "Parsing Failed", description: e.message || "An unknown error occurred.", variant: "destructive" });
-      setCurrentStep('upload'); // Go back to upload
+      setCurrentStep('upload'); 
     } finally {
       setIsLoading(false);
     }
   };
 
-  const handleInterviewDataSubmit = (data: string) => {
-    setInterviewData(data);
+  // Fetch initial AI message for interview
+  useEffect(() => {
+    if (currentStep === 'interview' && parsedData && chatHistory.length === 0 && !isLoading) {
+      const fetchInitialAIMessage = async () => {
+        setIsSendingMessage(true);
+        setError(null);
+        try {
+          const genkitHistory: GenkitChatMessage[] = []; // Empty history for first turn
+          const input: ConductInterviewInput = {
+            parsedResume: parsedData,
+            chatHistory: genkitHistory,
+            // userMessage is omitted for the AI to start the conversation
+          };
+          const result = await conductInterview(input);
+          setChatHistory(prev => [
+            ...prev, 
+            { id: crypto.randomUUID(), role: 'assistant', content: result.aiMessage, timestamp: new Date() }
+          ]);
+        } catch (e: any) {
+          console.error("Error fetching initial AI message:", e);
+          setError("Failed to start interview chat. " + e.message);
+          toast({ title: "Chat Error", description: e.message || "Could not start chat.", variant: "destructive" });
+        } finally {
+          setIsSendingMessage(false);
+        }
+      };
+      fetchInitialAIMessage();
+    }
+  }, [currentStep, parsedData, chatHistory.length, isLoading, toast]);
+
+
+  const handleSendMessageToInterviewAI = async (message: string) => {
+    if (!parsedData) {
+      setError("Parsed resume data is missing.");
+      toast({ title: "Error", description: "Cannot send message, parsed data missing.", variant: "destructive" });
+      return;
+    }
+    setIsSendingMessage(true);
     setError(null);
+
+    const newUserMessage: UIChatMessage = { id: crypto.randomUUID(), role: 'user', content: message, timestamp: new Date() };
+    setChatHistory(prev => [...prev, newUserMessage]);
+
+    try {
+      // Convert UI chat history to Genkit chat history
+      const genkitHistory: GenkitChatMessage[] = chatHistory.map(msg => ({
+        role: msg.role === 'user' ? 'user' : 'model',
+        parts: [{ text: msg.content }],
+      }));
+      // Add the current user message to genkitHistory for the prompt
+      genkitHistory.push({ role: 'user', parts: [{ text: message }] });
+
+
+      const input: ConductInterviewInput = {
+        parsedResume: parsedData,
+        chatHistory: genkitHistory.slice(0, -1), // Send history *before* current user message
+        userMessage: message,
+      };
+      
+      const result = await conductInterview(input);
+      setChatHistory(prev => [
+        ...prev, 
+        { id: crypto.randomUUID(), role: 'assistant', content: result.aiMessage, timestamp: new Date() }
+      ]);
+    } catch (e: any) {
+      console.error("Error in AI interview chat:", e);
+      const errorMessage = "AI chat error: " + e.message;
+      setError(errorMessage);
+      setChatHistory(prev => [
+        ...prev, 
+        { id: crypto.randomUUID(), role: 'assistant', content: `Sorry, I encountered an error: ${e.message}`, timestamp: new Date() }
+      ]);
+      toast({ title: "Chat Error", description: e.message || "An unknown error occurred.", variant: "destructive" });
+    } finally {
+      setIsSendingMessage(false);
+    }
+  };
+  
+  const handleFinishInterview = () => {
     setCurrentStep('rewrite');
-    handleRewriteResume(data);
+    // Convert chat history to a string for the rewrite flow
+    const interviewInsights = chatHistory
+      .map(msg => `${msg.role === 'user' ? 'User' : 'AI'}: ${msg.content}`)
+      .join('\n');
+    handleRewriteResume(interviewInsights);
   };
 
-  const handleRewriteResume = async (currentInterviewData: string) => {
+  const handleRewriteResume = async (interviewSummary: string) => {
     if (!resumeTextContent) {
       setError("Original resume text not found. Please re-upload.");
       toast({ title: "Error", description: "Original resume text not found.", variant: "destructive" });
@@ -105,7 +184,7 @@ export default function ResumeBoostClientPage() {
     try {
       const input: RewriteResumeInput = {
         resumeText: resumeTextContent,
-        interviewData: currentInterviewData,
+        interviewData: interviewSummary, // Pass the conversation summary
       };
       const result = await rewriteResume(input);
       setRewrittenResume(result);
@@ -115,7 +194,6 @@ export default function ResumeBoostClientPage() {
       console.error("Error rewriting resume:", e);
       setError("Failed to rewrite resume. Please try again. " + e.message);
       toast({ title: "Rewrite Failed", description: e.message || "An unknown error occurred.", variant: "destructive" });
-      // Optionally go back to interview step or allow retry
     } finally {
       setIsLoading(false);
     }
@@ -127,15 +205,16 @@ export default function ResumeBoostClientPage() {
     setResumeTextContent('');
     setResumeDataUri('');
     setParsedData(null);
-    setInterviewData('');
+    setChatHistory([]);
     setRewrittenResume(null);
     setError(null);
     setIsLoading(false);
+    setIsSendingMessage(false);
     setProgress(0);
   };
 
   const renderStepContent = () => {
-    if (isLoading) {
+    if (isLoading) { // This is for major step transitions
       return (
         <Card className="w-full max-w-lg shadow-lg">
           <CardHeader>
@@ -147,13 +226,13 @@ export default function ResumeBoostClientPage() {
           <CardContent className="text-center">
             <p className="text-muted-foreground mb-4">{loadingMessage}</p>
             <Progress value={progress} className="w-full" />
-             <p className="text-sm text-muted-foreground mt-2">{progress}%</p>
+            <p className="text-sm text-muted-foreground mt-2">{progress}%</p>
           </CardContent>
         </Card>
       );
     }
 
-    if (error) {
+    if (error && currentStep !== 'interview') { // Show general error card if not in interview (interview handles its own errors inline)
       return (
          <Card className="w-full max-w-lg shadow-lg">
           <CardHeader>
@@ -173,18 +252,27 @@ export default function ResumeBoostClientPage() {
     switch (currentStep) {
       case 'upload':
         return <ResumeUploader onUpload={handleResumeUpload} disabled={isLoading} />;
-      case 'parse': // This step is mostly handled by isLoading state after upload
-        return <p>Preparing to parse...</p>; // Should not stay here long
+      case 'parse': 
+        return <p>Preparing to parse...</p>; 
       case 'interview':
         if (!parsedData) return <p>Error: Parsed data not available. Please <Button variant="link" onClick={handleStartOver}>start over</Button>.</p>;
         return (
           <div className="w-full max-w-3xl space-y-6">
-            <ParsedResumeDisplay parsedData={parsedData} />
-            <InterviewInput onSubmit={handleInterviewDataSubmit} disabled={isLoading} />
+            {/* Optional: Display parsed data summary above chat */}
+            {/* <ParsedResumeDisplay parsedData={parsedData} /> */}
+            <InterviewInput
+              parsedData={parsedData}
+              chatHistory={chatHistory}
+              onSendMessage={handleSendMessageToInterviewAI}
+              onFinishInterview={handleFinishInterview}
+              disabled={isLoading} // General disable
+              isSendingMessage={isSendingMessage} // Specific for chat send
+            />
+            {error && <p className="text-destructive text-center mt-2">{error}</p>}
           </div>
         );
-      case 'rewrite': // Mostly handled by isLoading state after interview input
-         return <p>Preparing to rewrite...</p>; // Should not stay here long
+      case 'rewrite': 
+         return <p>Preparing to rewrite...</p>; 
       case 'review':
         if (!rewrittenResume || !resumeTextContent) return <p>Error: Rewritten data not available. Please <Button variant="link" onClick={handleStartOver}>start over</Button>.</p>;
         return (
@@ -202,10 +290,21 @@ export default function ResumeBoostClientPage() {
   const stepTitles: Record<Step, string> = {
     upload: 'Upload Your Resume',
     parse: 'Parsing Resume',
-    interview: 'Provide Interview Insights',
+    interview: 'AI Interview Chat',
     rewrite: 'Rewriting Your Resume',
     review: 'Review Your New Resume',
   };
+  
+  const stepIcons: Record<Step, React.ElementType> = {
+    upload: Rocket,
+    parse: Loader2,
+    interview: MessageSquare,
+    rewrite: Loader2,
+    review: Rocket, // Or a different icon for review
+  };
+
+  const CurrentStepIcon = stepIcons[currentStep] || Rocket;
+
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-center p-4 sm:p-6 md:p-8 bg-gradient-to-br from-background to-muted/30">
@@ -220,10 +319,13 @@ export default function ResumeBoostClientPage() {
       </header>
 
       <main className="w-full flex flex-col items-center">
-        {!isLoading && !error && (
+        {!isLoading && !error && (currentStep !== 'interview' || !parsedData) && ( // Don't show this header during active interview chat
             <Card className="w-full max-w-md mb-6 shadow-md">
                 <CardHeader>
-                    <CardTitle className="text-xl text-center">{stepTitles[currentStep]}</CardTitle>
+                    <CardTitle className="text-xl text-center flex items-center justify-center">
+                        <CurrentStepIcon className={`mr-2 h-6 w-6 ${isLoading || currentStep === 'parse' || currentStep === 'rewrite' ? 'animate-spin' : ''}`} />
+                        {stepTitles[currentStep]}
+                    </CardTitle>
                 </CardHeader>
             </Card>
         )}
@@ -237,4 +339,3 @@ export default function ResumeBoostClientPage() {
     </div>
   );
 }
-
