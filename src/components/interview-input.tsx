@@ -45,17 +45,25 @@ export function InterviewInput({
 
   const [isRecording, setIsRecording] = useState(false);
   const [hasMicPermission, setHasMicPermission] = useState<boolean | null>(null);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const audioChunksRef = useRef<Blob[]>([]);
+  const speechRecognitionRef = useRef<SpeechRecognition | null>(null);
 
   useEffect(() => {
+    const SpeechRecognitionAPI = window.SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognitionAPI) {
+      toast({
+        variant: 'destructive',
+        title: 'Speech Recognition Not Supported',
+        description: 'Your browser does not support speech recognition. Try Chrome, Edge, or Safari.',
+      });
+      setHasMicPermission(false); // Disable mic button if API not supported
+      return;
+    }
+
     const getMicPermission = async () => {
       try {
-        // Request audio-only permission
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
         setHasMicPermission(true);
-        // Clean up the stream immediately if not used for recording setup
-        stream.getTracks().forEach(track => track.stop());
+        stream.getTracks().forEach(track => track.stop()); // Release mic immediately
       } catch (error) {
         console.error('Error accessing microphone:', error);
         setHasMicPermission(false);
@@ -66,57 +74,90 @@ export function InterviewInput({
         });
       }
     };
-    if (hasMicPermission === null) { // Only request if not already determined
+
+    if (hasMicPermission === null) {
         getMicPermission();
     }
+    
+    return () => {
+      if (speechRecognitionRef.current) {
+        speechRecognitionRef.current.stop();
+        speechRecognitionRef.current = null;
+      }
+    };
   }, [toast, hasMicPermission]);
 
-  const startRecording = async () => {
+  const startRecording = () => {
     if (hasMicPermission === false) {
-      toast({ variant: 'destructive', title: 'Microphone permission denied.' });
+      toast({ variant: 'destructive', title: 'Microphone permission denied or feature not supported.' });
       return;
     }
-    if (hasMicPermission === null) {
-      toast({ variant: 'default', title: 'Requesting microphone permission...' });
-      // The useEffect hook will attempt to get permission. User might need to interact.
+     if (hasMicPermission === null) { // Should not happen if useEffect ran correctly
+      toast({ variant: 'default', title: 'Checking microphone permission...' });
       return;
     }
+
+    const SpeechRecognitionAPI = window.SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognitionAPI) { // Redundant check, but safe
+      toast({ variant: 'destructive', title: 'Speech recognition not supported.' });
+      return;
+    }
+    
+    if (speechRecognitionRef.current) { // Stop any existing instance
+        speechRecognitionRef.current.stop();
+    }
+
+    speechRecognitionRef.current = new SpeechRecognitionAPI();
+    const recognition = speechRecognitionRef.current;
+
+    recognition.continuous = false;
+    recognition.interimResults = false; 
+    recognition.lang = 'en-US';
+
+    recognition.onstart = () => {
+      setIsRecording(true);
+      setCurrentMessage(''); // Clear text area for new voice input
+      toast({ title: "Recording Started", description: "Speak now. Recording will stop when you pause." });
+    };
+
+    recognition.onresult = (event) => {
+      const transcript = event.results[0][0].transcript;
+      setCurrentMessage(transcript);
+      toast({ title: "Voice Input Captured!", description: "Review your message and send." });
+    };
+
+    recognition.onerror = (event) => {
+      console.error('Speech recognition error:', event.error);
+      let errorMessage = `An error occurred: ${event.error}.`;
+      if (event.error === 'no-speech') {
+        errorMessage = 'No speech was detected. Please try speaking louder or more clearly.';
+      } else if (event.error === 'audio-capture') {
+        errorMessage = 'Audio capture failed. Please check your microphone.';
+      } else if (event.error === 'not-allowed') {
+        errorMessage = 'Microphone access was denied. Please enable it in browser settings.';
+        setHasMicPermission(false);
+      }
+      toast({ variant: 'destructive', title: 'Speech Recognition Error', description: errorMessage });
+    };
+
+    recognition.onend = () => {
+      setIsRecording(false);
+      // speechRecognitionRef.current should be nullified or re-created on next start
+    };
 
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      mediaRecorderRef.current = new MediaRecorder(stream);
-      audioChunksRef.current = [];
-
-      mediaRecorderRef.current.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          audioChunksRef.current.push(event.data);
-        }
-      };
-
-      mediaRecorderRef.current.onstop = () => {
-        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-        // TODO: Process the audioBlob - e.g., send to STT service
-        // For now, we can log it or make it downloadable
-        console.log('Recording stopped. Audio Blob:', audioBlob);
-        toast({ title: "Recording Stopped", description: `Audio captured (${(audioBlob.size / 1024).toFixed(2)} KB). Transcription not yet implemented.`});
-        // Clean up the stream tracks
-        stream.getTracks().forEach(track => track.stop());
-      };
-
-      mediaRecorderRef.current.start();
-      setIsRecording(true);
-      toast({ title: "Recording Started", description: "Click the stop button to finish."});
-    } catch (error) {
-      console.error('Error starting recording:', error);
-      toast({ variant: 'destructive', title: 'Could not start recording', description: String(error) });
+      recognition.start();
+    } catch (e) {
+      console.error("Error starting speech recognition:", e);
+      toast({ variant: 'destructive', title: 'Could not start recording', description: String(e) });
+      setIsRecording(false);
     }
   };
 
   const stopRecording = () => {
-    if (mediaRecorderRef.current && isRecording) {
-      mediaRecorderRef.current.stop();
-      setIsRecording(false);
-      // Note: onstop handler will deal with the blob and toast
+    if (speechRecognitionRef.current && isRecording) {
+      speechRecognitionRef.current.stop();
+      // onend will set isRecording to false
     }
   };
 
@@ -151,15 +192,14 @@ export function InterviewInput({
           AI Interview Chat
         </CardTitle>
         <CardDescription>
-          Chat with our AI to clarify resume points and gather insights. 
-          Use text input or the microphone to record your responses (transcription coming soon!).
+          Chat with our AI to clarify resume points. Use text input, or click the microphone to speak.
         </CardDescription>
          {hasMicPermission === false && (
             <Alert variant="destructive" className="mt-2">
                 <AlertTriangle className="h-4 w-4" />
-                <AlertTitle>Microphone Access Denied</AlertTitle>
+                <AlertTitle>Microphone Access Denied or Not Supported</AlertTitle>
                 <AlertDescription>
-                Voice input is disabled. Please enable microphone permissions in your browser settings.
+                Voice input is disabled. Please enable microphone permissions or use a supported browser (e.g., Chrome, Edge, Safari).
                 </AlertDescription>
             </Alert>
         )}
@@ -226,7 +266,7 @@ export function InterviewInput({
           </Button>
           <Textarea
             id="interview-message"
-            placeholder={isRecording ? "Recording... click stop when done." : "Type your response here..."}
+            placeholder={isRecording ? "Listening..." : "Type or click mic to speak..."}
             value={currentMessage}
             onChange={(e) => setCurrentMessage(e.target.value)}
             rows={1}
