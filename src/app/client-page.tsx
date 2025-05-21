@@ -129,18 +129,19 @@ export default function OppyAiClientPage() {
 
     try {
       // Convert UI chat history to Genkit chat history
-      const genkitHistory: GenkitChatMessage[] = chatHistory.map(msg => ({
+      const genkitHistoryForPrompt: GenkitChatMessage[] = chatHistory.map(msg => ({
         role: msg.role === 'user' ? 'user' : 'model',
+        isUser: msg.role === 'user',
+        isModel: msg.role !== 'user', // 'assistant' in UI is 'model' for Genkit
         parts: [{ text: msg.content }],
       }));
-      // Add the current user message to genkitHistory for the prompt
-      genkitHistory.push({ role: 'user', parts: [{ text: message }] });
-
+      // Note: The current user's message (`message`) is passed separately as `userMessage` to the flow.
+      // `genkitHistoryForPrompt` should represent the history *before* the current user's message.
 
       const input: ConductInterviewInput = {
         parsedResume: parsedData,
-        chatHistory: genkitHistory.slice(0, -1), // Send history *before* current user message
-        userMessage: message,
+        chatHistory: genkitHistoryForPrompt, // Send history *before* current user message for the prompt
+        userMessage: message, // Current user message
       };
       
       const result = await conductInterview(input);
@@ -339,3 +340,4 @@ export default function OppyAiClientPage() {
     </div>
   );
 }
+

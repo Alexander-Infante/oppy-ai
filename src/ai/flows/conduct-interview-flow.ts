@@ -15,6 +15,8 @@ import {z}  from 'genkit';
 // Define Zod schema for the conversation history entry (Genkit message format)
 const GenkitChatMessageSchema = z.object({
   role: z.enum(['user', 'model']),
+  isUser: z.boolean().optional(), // Flag to indicate if the role is 'user'
+  isModel: z.boolean().optional(), // Flag to indicate if the role is 'model'
   parts: z.array(z.object({text: z.string()})),
 });
 export type ChatMessage = z.infer<typeof GenkitChatMessageSchema>; // Exporting the type, not the schema object
@@ -91,8 +93,8 @@ Education:
 
 Conversation History:
 {{#each chatHistory}}
-{{#if (eq this.role "user")}}User: {{this.parts.0.text}}{{/if}}
-{{#if (eq this.role "model")}}AI: {{this.parts.0.text}}{{/if}}
+{{#if this.isUser}}User: {{this.parts.0.text}}{{/if}}
+{{#if this.isModel}}AI: {{this.parts.0.text}}{{/if}}
 {{/each}}
 
 {{#if userMessage}}
