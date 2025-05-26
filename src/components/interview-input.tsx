@@ -46,6 +46,8 @@ export function InterviewInput({
   const [isRecording, setIsRecording] = useState(false);
   const [hasMicPermission, setHasMicPermission] = useState<boolean | null>(null);
   const speechRecognitionRef = useRef<SpeechRecognition | null>(null);
+  const silenceTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const interimTranscriptRef = useRef<string>(""); // To store transcript parts
 
   useEffect(() => {
     const SpeechRecognitionAPI = window.SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -84,6 +86,9 @@ export function InterviewInput({
         speechRecognitionRef.current.stop();
         speechRecognitionRef.current = null;
       }
+      if (silenceTimeoutRef.current) {
+        clearTimeout(silenceTimeoutRef.current);
+      }
     };
   }, [toast, hasMicPermission]);
 
@@ -92,38 +97,53 @@ export function InterviewInput({
       toast({ variant: 'destructive', title: 'Microphone permission denied or feature not supported.' });
       return;
     }
-     if (hasMicPermission === null) { // Should not happen if useEffect ran correctly
+     if (hasMicPermission === null) { 
       toast({ variant: 'default', title: 'Checking microphone permission...' });
       return;
     }
 
     const SpeechRecognitionAPI = window.SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SpeechRecognitionAPI) { // Redundant check, but safe
+    if (!SpeechRecognitionAPI) { 
       toast({ variant: 'destructive', title: 'Speech recognition not supported.' });
       return;
     }
     
-    if (speechRecognitionRef.current) { // Stop any existing instance
+    if (speechRecognitionRef.current) { 
         speechRecognitionRef.current.stop();
     }
 
     speechRecognitionRef.current = new SpeechRecognitionAPI();
     const recognition = speechRecognitionRef.current;
 
-    recognition.continuous = false;
-    recognition.interimResults = false; 
+    recognition.continuous = true; // Keep listening through pauses
+    recognition.interimResults = true; // Get interim results
     recognition.lang = 'en-US';
+    interimTranscriptRef.current = ""; // Reset interim transcript
 
     recognition.onstart = () => {
       setIsRecording(true);
-      setCurrentMessage(''); // Clear text area for new voice input
-      toast({ title: "Recording Started", description: "Speak now. Recording will stop when you pause." });
+      setCurrentMessage(''); 
+      toast({ title: "Recording Started", description: "Speak now. Stops after 10s of silence or manual stop." });
     };
 
     recognition.onresult = (event) => {
-      const transcript = event.results[0][0].transcript;
-      setCurrentMessage(transcript);
-      toast({ title: "Voice Input Captured!", description: "Review your message and send." });
+      if (silenceTimeoutRef.current) clearTimeout(silenceTimeoutRef.current);
+
+      let fullTranscript = "";
+      for (let i = event.resultIndex; i < event.results.length; ++i) {
+        if (event.results[i].isFinal) {
+          interimTranscriptRef.current += event.results[i][0].transcript;
+        }
+        fullTranscript += event.results[i][0].transcript;
+      }
+      setCurrentMessage(fullTranscript); // Update textarea with live transcript
+
+      silenceTimeoutRef.current = setTimeout(() => {
+        if (speechRecognitionRef.current && isRecording) { // check isRecording to prevent race condition if manually stopped
+            console.log("Silence timeout, stopping recognition.");
+            speechRecognitionRef.current.stop();
+        }
+      }, 10000); // 10 seconds timeout
     };
 
     recognition.onerror = (event) => {
@@ -138,11 +158,19 @@ export function InterviewInput({
         setHasMicPermission(false);
       }
       toast({ variant: 'destructive', title: 'Speech Recognition Error', description: errorMessage });
+       if (silenceTimeoutRef.current) clearTimeout(silenceTimeoutRef.current);
+      setIsRecording(false); // Ensure recording state is reset on error
     };
 
     recognition.onend = () => {
+      if (silenceTimeoutRef.current) clearTimeout(silenceTimeoutRef.current);
       setIsRecording(false);
-      // speechRecognitionRef.current should be nullified or re-created on next start
+      // Use the full transcript from currentMessage state which was updated by onresult
+      if (currentMessage.trim()) {
+        toast({ title: "Voice Input Captured!", description: "Review your message and send." });
+      } else {
+        toast({ title: "Recording Stopped", description: "No speech was captured to transcribe.", variant: "default" });
+      }
     };
 
     try {
@@ -155,9 +183,12 @@ export function InterviewInput({
   };
 
   const stopRecording = () => {
+    if (silenceTimeoutRef.current) clearTimeout(silenceTimeoutRef.current);
     if (speechRecognitionRef.current && isRecording) {
       speechRecognitionRef.current.stop();
-      // onend will set isRecording to false
+      // onend will set isRecording to false and handle toasts
+    } else if (isRecording) { // If recognition somehow stopped but state not updated
+        setIsRecording(false);
     }
   };
 
@@ -173,6 +204,7 @@ export function InterviewInput({
     if (!currentMessage.trim() || disabled || isSendingMessage || isRecording) return;
     await onSendMessage(currentMessage);
     setCurrentMessage('');
+    interimTranscriptRef.current = ""; // Clear for next voice input
   };
 
   useEffect(() => {
@@ -192,7 +224,8 @@ export function InterviewInput({
           AI Interview Chat
         </CardTitle>
         <CardDescription>
-          Chat with our AI to clarify resume points. Use text input, or click the microphone to speak.
+          Chat with our AI to clarify resume points. Use text input, or click the microphone to speak. 
+          Voice recording allows pauses and stops after 10s of silence.
         </CardDescription>
          {hasMicPermission === false && (
             <Alert variant="destructive" className="mt-2">
@@ -266,7 +299,7 @@ export function InterviewInput({
           </Button>
           <Textarea
             id="interview-message"
-            placeholder={isRecording ? "Listening..." : "Type or click mic to speak..."}
+            placeholder={isRecording ? "Listening... (Stops after 10s silence)" : "Type or click mic to speak..."}
             value={currentMessage}
             onChange={(e) => setCurrentMessage(e.target.value)}
             rows={1}
@@ -304,4 +337,3 @@ export function InterviewInput({
     </Card>
   );
 }
-
