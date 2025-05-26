@@ -54,7 +54,7 @@ export default function OppyAiClientPage() {
 
     const apiKey = process.env.NEXT_PUBLIC_ELEVENLABS_API_KEY;
 
-    if (apiKey) {
+    if (apiKey && apiKey.trim() !== "") {
       console.info("Attempting to use ElevenLabs for Text-to-Speech.");
       try {
         const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${ELEVENLABS_VOICE_ID}`, {
@@ -79,7 +79,7 @@ export default function OppyAiClientPage() {
           console.error("ElevenLabs API error:", errorData);
           toast({
             title: "ElevenLabs TTS Error",
-            description: `Failed to generate speech: ${errorData.detail?.message || response.statusText}. Ensure your API key is correct and has credits.`,
+            description: `Failed to generate speech: ${errorData.detail?.message || response.statusText}. Ensure your API key is correct, has credits, and you have restarted the dev server.`,
             variant: "destructive",
           });
           // No fallback to browser TTS here if API key was present but call failed
@@ -106,13 +106,17 @@ export default function OppyAiClientPage() {
         console.error("Failed to fetch TTS from ElevenLabs:", e);
         toast({
           title: "ElevenLabs TTS Request Failed",
-          description: e.message || "Could not connect to ElevenLabs.",
+          description: e.message || "Could not connect to ElevenLabs. Check your network and API key.",
           variant: "destructive",
         });
         // No fallback to browser TTS here if API key was present but call failed
       }
     } else {
-      console.warn("ElevenLabs API key (NEXT_PUBLIC_ELEVENLABS_API_KEY) not found. Attempting to use browser's built-in Text-to-Speech as a fallback. For higher quality voice, please set the API key.");
+      console.warn(
+        "ElevenLabs API key (NEXT_PUBLIC_ELEVENLABS_API_KEY) is not set or is empty in your .env file. " +
+        "Attempting to use browser's built-in Text-to-Speech as a fallback. " +
+        "For higher quality voice, please ensure the API key is correctly set to a non-empty value in .env and RESTART your development server."
+      );
       if ('speechSynthesis' in window) {
         const utterance = new SpeechSynthesisUtterance(text);
         window.speechSynthesis.speak(utterance);
