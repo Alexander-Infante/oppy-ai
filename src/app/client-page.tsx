@@ -17,9 +17,11 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Progress } from '@/components/ui/progress';
 import { useToast } from '@/hooks/use-toast';
 import { Rocket, Loader2, FileWarning, MessageSquare } from 'lucide-react';
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 
 type Step = 'upload' | 'parse' | 'interview' | 'rewrite' | 'review';
+
+const ELEVENLABS_VOICE_ID = "21m00Tcm4TlvDq8ikWAM"; // Example Voice ID (Rachel)
 
 export default function OppyAiClientPage() {
   const [currentStep, setCurrentStep] = useState<Step>('upload');
@@ -38,33 +40,85 @@ export default function OppyAiClientPage() {
 
   const { toast } = useToast();
   const [progress, setProgress] = useState(0);
+  const audioPlayerRef = useRef<HTMLAudioElement | null>(null);
 
-  // Helper function to speak text using browser's SpeechSynthesis API
-  const speakText = useCallback((text: string) => {
-    if ('speechSynthesis' in window) {
-      window.speechSynthesis.cancel(); // Cancel any ongoing speech
-      const utterance = new SpeechSynthesisUtterance(text);
-      // You can configure voice, rate, pitch here if desired
-      // Example:
-      // const voices = window.speechSynthesis.getVoices();
-      // utterance.voice = voices.find(voice => voice.lang.startsWith('en')) || voices[0];
-      // utterance.pitch = 1;
-      // utterance.rate = 1;
-      window.speechSynthesis.speak(utterance);
-    } else {
-      console.warn("Browser does not support speech synthesis.");
-      // Optionally, notify user if speech is not supported
-      // toast({
-      //   title: "Speech Output Not Supported",
-      //   description: "Your browser does not support reading messages aloud.",
-      // });
+  const speakText = useCallback(async (text: string) => {
+    if (audioPlayerRef.current && !audioPlayerRef.current.paused) {
+      audioPlayerRef.current.pause();
+      audioPlayerRef.current.currentTime = 0;
     }
-  }, []);
 
-  // Cleanup speech synthesis on component unmount
+    const apiKey = process.env.NEXT_PUBLIC_ELEVENLABS_API_KEY;
+    if (!apiKey) {
+      console.warn("ElevenLabs API key not found. Skipping TTS. Please set NEXT_PUBLIC_ELEVENLABS_API_KEY in your .env file.");
+      // Fallback to browser speech synthesis if no API key
+      if ('speechSynthesis' in window) {
+        window.speechSynthesis.cancel(); // Cancel any ongoing speech
+        const utterance = new SpeechSynthesisUtterance(text);
+        window.speechSynthesis.speak(utterance);
+      } else {
+        console.warn("Browser does not support speech synthesis as a fallback.");
+      }
+      return;
+    }
+
+    try {
+      const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${ELEVENLABS_VOICE_ID}`, {
+        method: 'POST',
+        headers: {
+          'Accept': 'audio/mpeg',
+          'Content-Type': 'application/json',
+          'xi-api-key': apiKey,
+        },
+        body: JSON.stringify({
+          text: text,
+          model_id: 'eleven_multilingual_v2', // Or another model like 'eleven_mono_v1'
+          voice_settings: {
+            stability: 0.5,
+            similarity_boost: 0.75,
+          },
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        console.error("ElevenLabs API error:", errorData);
+        toast({
+          title: "TTS Error",
+          description: `ElevenLabs: ${errorData.detail?.message || response.statusText}`,
+          variant: "destructive",
+        });
+        return;
+      }
+
+      const audioBlob = await response.blob();
+      const audioUrl = URL.createObjectURL(audioBlob);
+      
+      if (!audioPlayerRef.current) {
+        audioPlayerRef.current = new Audio();
+      }
+      audioPlayerRef.current.src = audioUrl;
+      audioPlayerRef.current.play().catch(e => console.error("Error playing audio:", e));
+
+    } catch (e: any) {
+      console.error("Failed to fetch TTS from ElevenLabs:", e);
+      toast({
+        title: "TTS Request Failed",
+        description: e.message || "Could not connect to ElevenLabs.",
+        variant: "destructive",
+      });
+    }
+  }, [toast]);
+
+
+  // Cleanup audio on component unmount or when speakText changes (though it shouldn't change often)
   useEffect(() => {
     return () => {
-      if ('speechSynthesis' in window) {
+      if (audioPlayerRef.current) {
+        audioPlayerRef.current.pause();
+        audioPlayerRef.current.src = ""; // Release object URL
+      }
+      if ('speechSynthesis' in window) { // Also cancel browser speech synthesis if it was used as fallback
         window.speechSynthesis.cancel();
       }
     };
@@ -93,10 +147,10 @@ export default function OppyAiClientPage() {
     setResumeDataUri(dataUri);
     setError(null);
     setCurrentStep('parse');
-    handleParseResume(dataUri, textContent);
+    handleParseResume(dataUri); 
   };
 
-  const handleParseResume = async (dataUri: string, originalText: string) => {
+  const handleParseResume = async (dataUri: string) => {
     setIsLoading(true);
     setLoadingMessage('Parsing your resume with AI...');
     setError(null);
@@ -125,7 +179,7 @@ export default function OppyAiClientPage() {
         try {
           const genkitHistory: GenkitChatMessage[] = []; 
           const input: ConductInterviewInput = {
-            parsedResume: parsedData as ParsedResumeData, // Cast as ParsedResumeData
+            parsedResume: parsedData as ParsedResumeData,
             chatHistory: genkitHistory,
           };
           const result = await conductInterview(input);
@@ -133,7 +187,7 @@ export default function OppyAiClientPage() {
             ...prev, 
             { id: crypto.randomUUID(), role: 'assistant', content: result.aiMessage, timestamp: new Date() }
           ]);
-          speakText(result.aiMessage); // Speak the AI's initial message
+          speakText(result.aiMessage);
         } catch (e: any) {
           console.error("Error fetching initial AI message:", e);
           setError("Failed to start interview chat. " + e.message);
@@ -168,7 +222,7 @@ export default function OppyAiClientPage() {
       }));
       
       const input: ConductInterviewInput = {
-        parsedResume: parsedData as ParsedResumeData, // Cast as ParsedResumeData
+        parsedResume: parsedData as ParsedResumeData,
         chatHistory: genkitHistoryForPrompt, 
         userMessage: message, 
       };
@@ -178,7 +232,7 @@ export default function OppyAiClientPage() {
         ...prev, 
         { id: crypto.randomUUID(), role: 'assistant', content: result.aiMessage, timestamp: new Date() }
       ]);
-      speakText(result.aiMessage); // Speak the AI's response
+      speakText(result.aiMessage);
     } catch (e: any) {
       console.error("Error in AI interview chat:", e);
       const errorMessage = "AI chat error: " + e.message;
@@ -188,7 +242,7 @@ export default function OppyAiClientPage() {
         ...prev, 
         { id: crypto.randomUUID(), role: 'assistant', content: aiErrorResponse, timestamp: new Date() }
       ]);
-      speakText(aiErrorResponse); // Speak the error message
+      speakText(aiErrorResponse);
       toast({ title: "Chat Error", description: e.message || "An unknown error occurred.", variant: "destructive" });
     } finally {
       setIsSendingMessage(false);
@@ -196,9 +250,12 @@ export default function OppyAiClientPage() {
   };
   
   const handleFinishInterview = () => {
-    if ('speechSynthesis' in window) {
-      window.speechSynthesis.cancel(); // Stop any ongoing speech
+    if (audioPlayerRef.current && !audioPlayerRef.current.paused) {
+      audioPlayerRef.current.pause();
     }
+     if ('speechSynthesis' in window) { // Also cancel browser speech synthesis if it was used as fallback
+        window.speechSynthesis.cancel();
+      }
     setCurrentStep('rewrite');
     const interviewInsights = chatHistory
       .map(msg => `${msg.role === 'user' ? 'User' : 'AI'}: ${msg.content}`)
@@ -218,7 +275,7 @@ export default function OppyAiClientPage() {
     setError(null);
     try {
       const input: RewriteResumeInput = {
-        resumeDataUri: resumeDataUri,
+        resumeDataUri: resumeDataUri, 
         interviewData: interviewSummary, 
       };
       const result = await rewriteResume(input);
@@ -235,9 +292,12 @@ export default function OppyAiClientPage() {
   };
   
   const handleStartOver = () => {
-    if ('speechSynthesis' in window) {
-      window.speechSynthesis.cancel(); // Stop any ongoing speech
+    if (audioPlayerRef.current && !audioPlayerRef.current.paused) {
+      audioPlayerRef.current.pause();
     }
+     if ('speechSynthesis' in window) { // Also cancel browser speech synthesis if it was used as fallback
+        window.speechSynthesis.cancel();
+      }
     setCurrentStep('upload');
     setResumeFile(null);
     setResumeTextContent('');
@@ -270,7 +330,7 @@ export default function OppyAiClientPage() {
       );
     }
 
-    if (error && currentStep !== 'interview') {
+    if (error && currentStep !== 'interview') { // Keep interview UI visible even on error to allow retries
       return (
          <Card className="w-full max-w-lg shadow-lg">
           <CardHeader>
@@ -297,14 +357,14 @@ export default function OppyAiClientPage() {
         return (
           <div className="w-full max-w-3xl space-y-6">
             <InterviewInput
-              parsedData={parsedData}
+              parsedData={parsedData} // Though not directly used in UI, good to pass if needed later
               chatHistory={chatHistory}
               onSendMessage={handleSendMessageToInterviewAI}
               onFinishInterview={handleFinishInterview}
-              disabled={isLoading}
-              isSendingMessage={isSendingMessage}
+              disabled={isLoading} // For overall step loading
+              isSendingMessage={isSendingMessage} // For individual message sending
             />
-            {error && <p className="text-destructive text-center mt-2">{error}</p>}
+            {error && <p className="text-destructive text-center mt-2">{error}</p>} {/* Show error within interview UI */}
           </div>
         );
       case 'rewrite': 
@@ -313,7 +373,7 @@ export default function OppyAiClientPage() {
         if (!rewrittenResume) return <p>Error: Rewritten data not available. Please <Button variant="link" onClick={handleStartOver}>start over</Button>.</p>;
         return (
           <ResumeEditor
-            originalResumeText={resumeTextContent} 
+            originalResumeText={resumeTextContent} // Use the stored text content for .txt or empty for PDF
             rewrittenResumeOutput={rewrittenResume}
             onStartOver={handleStartOver}
           />
@@ -355,7 +415,8 @@ export default function OppyAiClientPage() {
       </header>
 
       <main className="w-full flex flex-col items-center">
-        {!isLoading && !error && (currentStep !== 'interview' || !parsedData) && (
+        {/* Conditional rendering for step title card - adjusted for interview error handling */}
+        {!isLoading && !(currentStep === 'interview' && error) && (currentStep !== 'interview' || !parsedData) && (
             <Card className="w-full max-w-md mb-6 shadow-md">
                 <CardHeader>
                     <CardTitle className="text-xl text-center flex items-center justify-center">
@@ -375,4 +436,3 @@ export default function OppyAiClientPage() {
     </div>
   );
 }
-
