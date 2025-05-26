@@ -5,7 +5,7 @@ import type { ParseResumeInput, ParseResumeOutput } from '@/ai/flows/parse-resum
 import { parseResume } from '@/ai/flows/parse-resume';
 import type { RewriteResumeInput, RewriteResumeOutput } from '@/ai/flows/rewrite-resume';
 import { rewriteResume } from '@/ai/flows/rewrite-resume';
-import type { ConductInterviewInput, ConductInterviewOutput, ChatMessage as GenkitChatMessage } from '@/ai/flows/conduct-interview-flow';
+import type { ConductInterviewInput, ConductInterviewOutput, ChatMessage as GenkitChatMessage, ParsedResumeData } from '@/ai/flows/conduct-interview-flow';
 import { conductInterview } from '@/ai/flows/conduct-interview-flow';
 
 import { ResumeUploader } from '@/components/resume-uploader';
@@ -38,6 +38,38 @@ export default function OppyAiClientPage() {
 
   const { toast } = useToast();
   const [progress, setProgress] = useState(0);
+
+  // Helper function to speak text using browser's SpeechSynthesis API
+  const speakText = useCallback((text: string) => {
+    if ('speechSynthesis' in window) {
+      window.speechSynthesis.cancel(); // Cancel any ongoing speech
+      const utterance = new SpeechSynthesisUtterance(text);
+      // You can configure voice, rate, pitch here if desired
+      // Example:
+      // const voices = window.speechSynthesis.getVoices();
+      // utterance.voice = voices.find(voice => voice.lang.startsWith('en')) || voices[0];
+      // utterance.pitch = 1;
+      // utterance.rate = 1;
+      window.speechSynthesis.speak(utterance);
+    } else {
+      console.warn("Browser does not support speech synthesis.");
+      // Optionally, notify user if speech is not supported
+      // toast({
+      //   title: "Speech Output Not Supported",
+      //   description: "Your browser does not support reading messages aloud.",
+      // });
+    }
+  }, []);
+
+  // Cleanup speech synthesis on component unmount
+  useEffect(() => {
+    return () => {
+      if ('speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+      }
+    };
+  }, []);
+
 
   useEffect(() => {
     let timer: NodeJS.Timeout;
@@ -91,17 +123,17 @@ export default function OppyAiClientPage() {
         setIsSendingMessage(true);
         setError(null);
         try {
-          const genkitHistory: GenkitChatMessage[] = []; // Empty history for first turn
+          const genkitHistory: GenkitChatMessage[] = []; 
           const input: ConductInterviewInput = {
-            parsedResume: parsedData,
+            parsedResume: parsedData as ParsedResumeData, // Cast as ParsedResumeData
             chatHistory: genkitHistory,
-            // userMessage is omitted for the AI to start the conversation
           };
           const result = await conductInterview(input);
           setChatHistory(prev => [
             ...prev, 
             { id: crypto.randomUUID(), role: 'assistant', content: result.aiMessage, timestamp: new Date() }
           ]);
+          speakText(result.aiMessage); // Speak the AI's initial message
         } catch (e: any) {
           console.error("Error fetching initial AI message:", e);
           setError("Failed to start interview chat. " + e.message);
@@ -112,7 +144,7 @@ export default function OppyAiClientPage() {
       };
       fetchInitialAIMessage();
     }
-  }, [currentStep, parsedData, chatHistory.length, isLoading, toast]);
+  }, [currentStep, parsedData, chatHistory.length, isLoading, toast, speakText]);
 
 
   const handleSendMessageToInterviewAI = async (message: string) => {
@@ -128,20 +160,17 @@ export default function OppyAiClientPage() {
     setChatHistory(prev => [...prev, newUserMessage]);
 
     try {
-      // Convert UI chat history to Genkit chat history
       const genkitHistoryForPrompt: GenkitChatMessage[] = chatHistory.map(msg => ({
         role: msg.role === 'user' ? 'user' : 'model',
         isUser: msg.role === 'user',
-        isModel: msg.role !== 'user', // 'assistant' in UI is 'model' for Genkit
+        isModel: msg.role !== 'user',
         parts: [{ text: msg.content }],
       }));
-      // Note: The current user's message (`message`) is passed separately as `userMessage` to the flow.
-      // `genkitHistoryForPrompt` should represent the history *before* the current user's message.
-
+      
       const input: ConductInterviewInput = {
-        parsedResume: parsedData,
-        chatHistory: genkitHistoryForPrompt, // Send history *before* current user message for the prompt
-        userMessage: message, // Current user message
+        parsedResume: parsedData as ParsedResumeData, // Cast as ParsedResumeData
+        chatHistory: genkitHistoryForPrompt, 
+        userMessage: message, 
       };
       
       const result = await conductInterview(input);
@@ -149,14 +178,17 @@ export default function OppyAiClientPage() {
         ...prev, 
         { id: crypto.randomUUID(), role: 'assistant', content: result.aiMessage, timestamp: new Date() }
       ]);
+      speakText(result.aiMessage); // Speak the AI's response
     } catch (e: any) {
       console.error("Error in AI interview chat:", e);
       const errorMessage = "AI chat error: " + e.message;
       setError(errorMessage);
+      const aiErrorResponse = `Sorry, I encountered an error: ${e.message}`;
       setChatHistory(prev => [
         ...prev, 
-        { id: crypto.randomUUID(), role: 'assistant', content: `Sorry, I encountered an error: ${e.message}`, timestamp: new Date() }
+        { id: crypto.randomUUID(), role: 'assistant', content: aiErrorResponse, timestamp: new Date() }
       ]);
+      speakText(aiErrorResponse); // Speak the error message
       toast({ title: "Chat Error", description: e.message || "An unknown error occurred.", variant: "destructive" });
     } finally {
       setIsSendingMessage(false);
@@ -164,8 +196,10 @@ export default function OppyAiClientPage() {
   };
   
   const handleFinishInterview = () => {
+    if ('speechSynthesis' in window) {
+      window.speechSynthesis.cancel(); // Stop any ongoing speech
+    }
     setCurrentStep('rewrite');
-    // Convert chat history to a string for the rewrite flow
     const interviewInsights = chatHistory
       .map(msg => `${msg.role === 'user' ? 'User' : 'AI'}: ${msg.content}`)
       .join('\n');
@@ -173,8 +207,8 @@ export default function OppyAiClientPage() {
   };
 
   const handleRewriteResume = async (interviewSummary: string) => {
-    if (!resumeDataUri) { // Changed check from resumeTextContent to resumeDataUri
-      setError("Original resume data not found. Please re-upload."); // Updated error message
+    if (!resumeDataUri) {
+      setError("Original resume data not found. Please re-upload.");
       toast({ title: "Error", description: "Original resume data not found. Please re-upload.", variant: "destructive" });
       setCurrentStep('upload');
       return;
@@ -184,7 +218,7 @@ export default function OppyAiClientPage() {
     setError(null);
     try {
       const input: RewriteResumeInput = {
-        resumeDataUri: resumeDataUri, // Pass resumeDataUri
+        resumeDataUri: resumeDataUri,
         interviewData: interviewSummary, 
       };
       const result = await rewriteResume(input);
@@ -201,6 +235,9 @@ export default function OppyAiClientPage() {
   };
   
   const handleStartOver = () => {
+    if ('speechSynthesis' in window) {
+      window.speechSynthesis.cancel(); // Stop any ongoing speech
+    }
     setCurrentStep('upload');
     setResumeFile(null);
     setResumeTextContent('');
@@ -215,7 +252,7 @@ export default function OppyAiClientPage() {
   };
 
   const renderStepContent = () => {
-    if (isLoading) { // This is for major step transitions
+    if (isLoading) {
       return (
         <Card className="w-full max-w-lg shadow-lg">
           <CardHeader>
@@ -233,7 +270,7 @@ export default function OppyAiClientPage() {
       );
     }
 
-    if (error && currentStep !== 'interview') { // Show general error card if not in interview (interview handles its own errors inline)
+    if (error && currentStep !== 'interview') {
       return (
          <Card className="w-full max-w-lg shadow-lg">
           <CardHeader>
@@ -259,15 +296,13 @@ export default function OppyAiClientPage() {
         if (!parsedData) return <p>Error: Parsed data not available. Please <Button variant="link" onClick={handleStartOver}>start over</Button>.</p>;
         return (
           <div className="w-full max-w-3xl space-y-6">
-            {/* Optional: Display parsed data summary above chat */}
-            {/* <ParsedResumeDisplay parsedData={parsedData} /> */}
             <InterviewInput
               parsedData={parsedData}
               chatHistory={chatHistory}
               onSendMessage={handleSendMessageToInterviewAI}
               onFinishInterview={handleFinishInterview}
-              disabled={isLoading} // General disable
-              isSendingMessage={isSendingMessage} // Specific for chat send
+              disabled={isLoading}
+              isSendingMessage={isSendingMessage}
             />
             {error && <p className="text-destructive text-center mt-2">{error}</p>}
           </div>
@@ -276,7 +311,6 @@ export default function OppyAiClientPage() {
          return <p>Preparing to rewrite...</p>; 
       case 'review':
         if (!rewrittenResume) return <p>Error: Rewritten data not available. Please <Button variant="link" onClick={handleStartOver}>start over</Button>.</p>;
-        // originalResumeText will be empty for PDFs, ResumeEditor will handle displaying it or a message
         return (
           <ResumeEditor
             originalResumeText={resumeTextContent} 
@@ -302,7 +336,7 @@ export default function OppyAiClientPage() {
     parse: Loader2,
     interview: MessageSquare,
     rewrite: Loader2,
-    review: Rocket, // Or a different icon for review
+    review: Rocket,
   };
 
   const CurrentStepIcon = stepIcons[currentStep] || Rocket;
@@ -321,7 +355,7 @@ export default function OppyAiClientPage() {
       </header>
 
       <main className="w-full flex flex-col items-center">
-        {!isLoading && !error && (currentStep !== 'interview' || !parsedData) && ( // Don't show this header during active interview chat
+        {!isLoading && !error && (currentStep !== 'interview' || !parsedData) && (
             <Card className="w-full max-w-md mb-6 shadow-md">
                 <CardHeader>
                     <CardTitle className="text-xl text-center flex items-center justify-center">
