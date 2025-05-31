@@ -6,7 +6,6 @@ import React, { useState, useRef, useEffect, useCallback, useImperativeHandle, f
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Textarea } from '@/components/ui/textarea';
-// import { Label } from '@/components/ui/label'; // Not used
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Send, Loader2, Mic, StopCircle, Sparkles, User, Bot, ChevronRight, AlertTriangle } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -30,7 +29,7 @@ export interface InterviewInputHandle {
 interface InterviewInputProps {
   parsedData: ParseResumeOutput; 
   chatHistory: UIChatMessage[];
-  onSendMessage: (message: string) => Promise<void>; // May become less used if auto-send is primary
+  onSendMessage: (message: string) => Promise<void>;
   onTranscriptionComplete?: (transcript: string) => void;
   onFinishInterview: () => void;
   disabled?: boolean; 
@@ -47,14 +46,14 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
 }, ref) => {
   const [currentMessage, setCurrentMessage] = useState('');
   const scrollAreaRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const { toast } = useToast();
 
   const [isRecording, setIsRecording] = useState(false);
   const [hasMicPermission, setHasMicPermission] = useState<boolean | null>(null);
   const speechRecognitionRef = useRef<SpeechRecognition | null>(null);
   const silenceTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const interimTranscriptRef = useRef<string>(""); 
-  const isMountedRef = useRef(false); // To track mount status for async operations
+  const isMountedRef = useRef(false); 
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -62,6 +61,15 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
       isMountedRef.current = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto'; // Reset height to recalculate
+      const scrollHeight = textareaRef.current.scrollHeight;
+      textareaRef.current.style.height = `${scrollHeight}px`;
+      // Optional: Define a max height if needed, e.g., textareaRef.current.style.maxHeight = '150px';
+    }
+  }, [currentMessage]);
 
   const startRecording = useCallback(() => {
     if (!isMountedRef.current) return;
@@ -71,21 +79,18 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
     }
      if (hasMicPermission === null) { 
       toast({ variant: 'default', title: 'Checking microphone permission...' });
-      // Attempt to get permission again if it's null
       (async () => {
           const SpeechRecognitionAPI = window.SpeechRecognition || (window as any).webkitSpeechRecognition;
           if (!SpeechRecognitionAPI) {
-              setHasMicPermission(false); return;
+              if(isMountedRef.current) setHasMicPermission(false); return;
           }
           try {
               const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-              setHasMicPermission(true);
+              if(isMountedRef.current) setHasMicPermission(true);
               stream.getTracks().forEach(track => track.stop());
-              // Try starting again now that permission might be true
-              // Check isMountedRef again before potentially starting
               if (isMountedRef.current) setTimeout(startRecording, 100); 
           } catch (error) {
-              setHasMicPermission(false);
+              if(isMountedRef.current) setHasMicPermission(false);
           }
       })();
       return;
@@ -107,7 +112,6 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
     recognition.continuous = true;
     recognition.interimResults = true;
     recognition.lang = 'en-US';
-    interimTranscriptRef.current = ""; 
 
     recognition.onstart = () => {
       if (!isMountedRef.current) return;
@@ -124,11 +128,10 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
       for (let i = event.resultIndex; i < event.results.length; ++i) {
          fullTranscript += event.results[i][0].transcript;
       }
-      setCurrentMessage(fullTranscript); // Update textarea with live transcript
+      setCurrentMessage(fullTranscript); 
 
       silenceTimeoutRef.current = setTimeout(() => {
         if (speechRecognitionRef.current && isRecording && isMountedRef.current) {
-            console.log("Silence timeout, stopping recognition.");
             stopRecordingInternal();
         }
       }, 7000); 
@@ -148,27 +151,21 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
       }
       toast({ variant: 'destructive', title: 'Speech Recognition Error', description: errorMessage });
       if (silenceTimeoutRef.current) clearTimeout(silenceTimeoutRef.current);
-      setIsRecording(false); 
+      if(isMountedRef.current) setIsRecording(false); 
     };
 
     recognition.onend = () => {
       if (!isMountedRef.current) return;
       if (silenceTimeoutRef.current) clearTimeout(silenceTimeoutRef.current);
-      setIsRecording(false);
+      if(isMountedRef.current) setIsRecording(false);
       
-      const finalTranscript = currentMessage.trim(); // currentMessage should have the complete transcript
-      if (finalTranscript) {
-        toast({ title: "Voice Input Captured!", description: "Sending your message..." });
-        if (onTranscriptionComplete) {
+      const finalTranscript = currentMessage.trim(); 
+      if (finalTranscript && onTranscriptionComplete) {
           onTranscriptionComplete(finalTranscript);
-        } else { // Fallback if onTranscriptionComplete is not used for some reason
-          onSendMessage(finalTranscript);
-        }
-        setCurrentMessage(''); // Clear after sending
-      } else {
+          setCurrentMessage(''); 
+      } else if (!finalTranscript) {
         toast({ title: "Recording Stopped", description: "No speech was captured to transcribe.", variant: "default" });
       }
-      interimTranscriptRef.current = "";
     };
 
     try {
@@ -178,15 +175,14 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
       toast({ variant: 'destructive', title: 'Could not start recording', description: String(e) });
       if (isMountedRef.current) setIsRecording(false);
     }
-  }, [hasMicPermission, toast, onSendMessage, onTranscriptionComplete, isRecording]);
+  }, [hasMicPermission, toast, onTranscriptionComplete, isRecording, currentMessage]); // Added currentMessage
 
 
   const stopRecordingInternal = useCallback(() => {
     if (silenceTimeoutRef.current) clearTimeout(silenceTimeoutRef.current);
-    if (speechRecognitionRef.current && isRecording) { // isRecording check prevents calling stop multiple times
+    if (speechRecognitionRef.current && isRecording) { 
       speechRecognitionRef.current.stop(); 
-      // onend will handle setIsRecording(false) and further logic
-    } else if (isRecording) { // Fallback if recognition somehow stopped but state not updated
+    } else if (isRecording) { 
       if(isMountedRef.current) setIsRecording(false);
     }
   }, [isRecording]);
@@ -254,16 +250,14 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
     }
   };
 
-  const handleSendText = async () => { // Renamed from handleSend to avoid confusion if parent also has handleSend
+  const handleSendText = async () => { 
     if (!currentMessage.trim() || disabled || isSendingMessage || isRecording) return;
-    // If sending text manually, we assume transcription is complete or not used.
     if (onTranscriptionComplete) {
       onTranscriptionComplete(currentMessage.trim());
     } else {
       await onSendMessage(currentMessage.trim());
     }
     setCurrentMessage('');
-    interimTranscriptRef.current = ""; 
   };
 
   useEffect(() => {
@@ -320,7 +314,7 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
                       : 'bg-muted text-muted-foreground rounded-bl-none'
                   )}
                 >
-                  <p className="text-sm">{chat.content}</p>
+                  <p className="text-sm whitespace-pre-wrap">{chat.content}</p>
                   <p className="text-xs text-muted-foreground/70 mt-1 text-right">
                     {chat.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                   </p>
@@ -346,24 +340,25 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
         </ScrollArea>
       </CardContent>
       <CardFooter className="p-4 sm:p-6 border-t">
-        <div className="flex w-full items-center space-x-2">
+        <div className="flex w-full items-end space-x-2"> {/* Changed items-center to items-end */}
           <Button 
             variant="outline" 
             size="icon" 
-            disabled={disabled || isSendingMessage || hasMicPermission === false || hasMicPermission === null} // Disable if permission null too
+            disabled={disabled || isSendingMessage || hasMicPermission === false || hasMicPermission === null} 
             onClick={handleMicClick}
             aria-label={isRecording ? "Stop recording" : "Start voice input"}
+            className="self-end mb-[1px]" // Align button with bottom of potentially taller textarea
           >
             {isRecording ? <StopCircle className="h-5 w-5 text-destructive" /> : <Mic className="h-5 w-5" />}
           </Button>
           <Textarea
+            ref={textareaRef}
             id="interview-message"
             placeholder={isRecording ? "Listening... (Stops after 7s silence)" : "Type or click mic to speak..."}
             value={currentMessage}
             onChange={(e) => setCurrentMessage(e.target.value)}
-            rows={1}
-            disabled={disabled || isSendingMessage || isRecording} // Still disable textarea during recording for clarity
-            className="text-base flex-grow resize-none min-h-[40px]"
+            disabled={disabled || isSendingMessage || isRecording} 
+            className="text-base flex-grow resize-none min-h-[40px] max-h-[150px] overflow-y-auto" // Added max-h and overflow-y-auto
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
@@ -376,6 +371,7 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
             disabled={!currentMessage.trim() || disabled || isSendingMessage || isRecording}
             size="icon"
             aria-label="Send message"
+            className="self-end mb-[1px]" // Align button with bottom
           >
             {isSendingMessage ? (
               <Loader2 className="h-5 w-5 animate-spin" />
@@ -386,12 +382,12 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
         </div>
         <Button 
           onClick={() => {
-            if(isRecording) stopRecordingInternal(); // Stop recording if active
+            if(isRecording) stopRecordingInternal(); 
             onFinishInterview();
           }} 
-          disabled={disabled || isSendingMessage} // Recording state doesn't need to disable finish
+          disabled={disabled || isSendingMessage} 
           variant="default"
-          className="ml-4"
+          className="ml-4 self-end mb-[1px]" // Align button with bottom
         >
           Finish Interview <ChevronRight className="ml-1 h-4 w-4"/>
         </Button>
@@ -401,5 +397,6 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
 });
 
 InterviewInput.displayName = "InterviewInput";
+    
 
     
