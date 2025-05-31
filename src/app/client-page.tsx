@@ -9,8 +9,8 @@ import type { ConductInterviewInput, ConductInterviewOutput, ChatMessage as Genk
 import { conductInterview } from '@/ai/flows/conduct-interview-flow';
 
 import { ResumeUploader } from '@/components/resume-uploader';
-import { ParsedResumeDisplay } from '@/components/parsed-resume-display';
-import { InterviewInput, UIChatMessage } from '@/components/interview-input';
+// import { ParsedResumeDisplay } from '@/components/parsed-resume-display'; // Not directly used if interview is main focus post-parse
+import { InterviewInput, UIChatMessage, type InterviewInputHandle } from '@/components/interview-input';
 import { ResumeEditor } from '@/components/resume-editor';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -33,31 +33,39 @@ export default function OppyAiClientPage() {
   const [chatHistory, setChatHistory] = useState<UIChatMessage[]>([]);
   const [rewrittenResume, setRewrittenResume] = useState<RewriteResumeOutput | null>(null);
   
-  const [isLoading, setIsLoading] = useState<boolean>(false); // For major step transitions
-  const [isSendingMessage, setIsSendingMessage] = useState<boolean>(false); // For chat message sending
+  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [isSendingMessage, setIsSendingMessage] = useState<boolean>(false);
   const [loadingMessage, setLoadingMessage] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
 
   const { toast } = useToast();
   const [progress, setProgress] = useState(0);
   const audioPlayerRef = useRef<HTMLAudioElement | null>(null);
+  const interviewInputRef = useRef<InterviewInputHandle | null>(null);
+  const isMountedRef = useRef(false); // To track mount status for async operations
 
-  const speakText = useCallback(async (text: string) => {
-    // Stop any currently playing audio (ElevenLabs or browser)
-    if (audioPlayerRef.current && !audioPlayerRef.current.paused) {
-      audioPlayerRef.current.pause();
-      audioPlayerRef.current.currentTime = 0;
-    }
-    if ('speechSynthesis' in window) { // Also cancel browser speech synthesis
-      window.speechSynthesis.cancel();
-    }
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
-    const apiKey = process.env.NEXT_PUBLIC_ELEVENLABS_API_KEY;
+  const speakText = useCallback((text: string): Promise<void> => {
+    return new Promise((resolve, reject) => {
+      if (audioPlayerRef.current && !audioPlayerRef.current.paused) {
+        audioPlayerRef.current.pause();
+        audioPlayerRef.current.currentTime = 0;
+      }
+      if ('speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+      }
 
-    if (apiKey && apiKey.trim() !== "") {
-      console.info("Attempting to use ElevenLabs for Text-to-Speech.");
-      try {
-        const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${ELEVENLABS_VOICE_ID}`, {
+      const apiKey = process.env.NEXT_PUBLIC_ELEVENLABS_API_KEY;
+
+      if (apiKey && apiKey.trim() !== "") {
+        console.info("Attempting to use ElevenLabs for Text-to-Speech.");
+        fetch(`https://api.elevenlabs.io/v1/text-to-speech/${ELEVENLABS_VOICE_ID}`, {
           method: 'POST',
           headers: {
             'Accept': 'audio/mpeg',
@@ -66,68 +74,82 @@ export default function OppyAiClientPage() {
           },
           body: JSON.stringify({
             text: text,
-            model_id: 'eleven_multilingual_v2',
+            model_id: 'eleven_multilingual_v2', // or your preferred model
             voice_settings: {
               stability: 0.5,
               similarity_boost: 0.75,
             },
           }),
-        });
-
-        if (!response.ok) {
-          const errorData = await response.json();
-          console.error("ElevenLabs API error:", errorData);
+        })
+        .then(response => {
+          if (!response.ok) {
+            response.json().then(errorData => {
+              console.error("ElevenLabs API error:", errorData);
+              toast({
+                title: "ElevenLabs TTS Error",
+                description: `Failed to generate speech: ${errorData.detail?.message || response.statusText}. Check API key & credits. Restart dev server if .env changed.`,
+                variant: "destructive",
+              });
+              reject(new Error(errorData.detail?.message || `ElevenLabs API Error: ${response.statusText}`));
+            }).catch(() => {
+                reject(new Error(`ElevenLabs API Error: ${response.statusText} (Could not parse error response)`));
+            });
+            return; // Don't proceed further in this .then block
+          }
+          return response.blob();
+        })
+        .then(audioBlob => {
+          if (!audioBlob) return; // Already handled error
+          const audioUrl = URL.createObjectURL(audioBlob);
+          
+          if (!audioPlayerRef.current) {
+            audioPlayerRef.current = new Audio();
+          }
+          audioPlayerRef.current.src = audioUrl;
+          audioPlayerRef.current.onended = () => resolve();
+          audioPlayerRef.current.onerror = () => {
+            console.error("Error playing audio from ElevenLabs during playback.");
+            toast({ title: "Audio Playback Error", description: "Could not play audio from ElevenLabs.", variant: "destructive"});
+            reject(new Error("Audio playback error"));
+          };
+          audioPlayerRef.current.play().catch(e => {
+              console.error("Error playing audio from ElevenLabs:", e);
+              toast({ title: "Audio Playback Error", description: "Could not play audio from ElevenLabs.", variant: "destructive"});
+              reject(e);
+          });
+        })
+        .catch(e => {
+          console.error("Failed to fetch TTS from ElevenLabs:", e);
           toast({
-            title: "ElevenLabs TTS Error",
-            description: `Failed to generate speech: ${errorData.detail?.message || response.statusText}. Ensure your API key is correct, has credits, and you have restarted the dev server.`,
+            title: "ElevenLabs TTS Request Failed",
+            description: e.message || "Could not connect to ElevenLabs. Check network/API key. Restart dev server if .env changed.",
             variant: "destructive",
           });
-          // No fallback to browser TTS here if API key was present but call failed
-          return;
-        }
-
-        const audioBlob = await response.blob();
-        const audioUrl = URL.createObjectURL(audioBlob);
-        
-        if (!audioPlayerRef.current) {
-          audioPlayerRef.current = new Audio();
-        }
-        audioPlayerRef.current.src = audioUrl;
-        audioPlayerRef.current.play().catch(e => {
-            console.error("Error playing audio from ElevenLabs:", e);
-            toast({
-                title: "Audio Playback Error",
-                description: "Could not play audio from ElevenLabs.",
-                variant: "destructive",
-            });
+          reject(e);
         });
-
-      } catch (e: any) {
-        console.error("Failed to fetch TTS from ElevenLabs:", e);
-        toast({
-          title: "ElevenLabs TTS Request Failed",
-          description: e.message || "Could not connect to ElevenLabs. Check your network and API key.",
-          variant: "destructive",
-        });
-        // No fallback to browser TTS here if API key was present but call failed
-      }
-    } else {
-      console.warn(
-        "ElevenLabs API key (NEXT_PUBLIC_ELEVENLABS_API_KEY) is not set or is empty in your .env file. " +
-        "Attempting to use browser's built-in Text-to-Speech as a fallback. " +
-        "For higher quality voice, please ensure the API key is correctly set to a non-empty value in .env and RESTART your development server."
-      );
-      if ('speechSynthesis' in window) {
-        const utterance = new SpeechSynthesisUtterance(text);
-        window.speechSynthesis.speak(utterance);
       } else {
-        console.warn("Browser does not support speech synthesis, and ElevenLabs API key is not configured. No audio will be played.");
+        console.warn(
+            "ElevenLabs API key (NEXT_PUBLIC_ELEVENLABS_API_KEY) is not set or is empty in your .env file. " +
+            "Ensure it's correctly set and RESTART your development server. " +
+            "Attempting to use browser's built-in Text-to-Speech as a fallback."
+        );
+        if ('speechSynthesis' in window) {
+          const utterance = new SpeechSynthesisUtterance(text);
+          utterance.onend = () => resolve();
+          utterance.onerror = (event) => {
+            console.warn("Browser SpeechSynthesis error:", event.error);
+            reject(new Error(`Browser TTS error: ${event.error}`));
+          };
+          window.speechSynthesis.speak(utterance);
+        } else {
+          console.warn("Browser does not support speech synthesis, and ElevenLabs API key is not configured. No audio will be played.");
+          resolve(); // Resolve so the flow can continue if TTS is not critical
+        }
       }
-    }
+    });
   }, [toast]);
 
 
-  // Cleanup audio on component unmount
   useEffect(() => {
     return () => {
       if (audioPlayerRef.current) {
@@ -182,7 +204,19 @@ export default function OppyAiClientPage() {
       toast({ title: "Parsing Failed", description: e.message || "An unknown error occurred.", variant: "destructive" });
       setCurrentStep('upload'); 
     } finally {
-      setIsLoading(false);
+      if (isMountedRef.current) setIsLoading(false);
+    }
+  };
+
+  const startConversationCycle = async (aiMessage: string) => {
+    if (!isMountedRef.current) return;
+    try {
+      await speakText(aiMessage);
+    } catch (ttsError) {
+      console.warn("TTS failed, but continuing to listen for user input.", ttsError);
+    }
+    if (isMountedRef.current && currentStep === 'interview') { // Ensure still in interview step
+        interviewInputRef.current?.startRecording();
     }
   };
 
@@ -190,6 +224,7 @@ export default function OppyAiClientPage() {
   useEffect(() => {
     if (currentStep === 'interview' && parsedData && chatHistory.length === 0 && !isLoading) {
       const fetchInitialAIMessage = async () => {
+        if (!isMountedRef.current) return;
         setIsSendingMessage(true);
         setError(null);
         try {
@@ -199,38 +234,45 @@ export default function OppyAiClientPage() {
             chatHistory: genkitHistory,
           };
           const result = await conductInterview(input);
+          if (!isMountedRef.current) return;
           setChatHistory(prev => [
             ...prev, 
             { id: crypto.randomUUID(), role: 'assistant', content: result.aiMessage, timestamp: new Date() }
           ]);
-          speakText(result.aiMessage);
+          await startConversationCycle(result.aiMessage);
         } catch (e: any) {
           console.error("Error fetching initial AI message:", e);
-          setError("Failed to start interview chat. " + e.message);
-          toast({ title: "Chat Error", description: e.message || "Could not start chat.", variant: "destructive" });
+          if (isMountedRef.current) {
+            setError("Failed to start interview chat. " + e.message);
+            toast({ title: "Chat Error", description: e.message || "Could not start chat.", variant: "destructive" });
+          }
         } finally {
-          setIsSendingMessage(false);
+          if (isMountedRef.current) setIsSendingMessage(false);
         }
       };
       fetchInitialAIMessage();
     }
-  }, [currentStep, parsedData, chatHistory.length, isLoading, toast, speakText]);
+  }, [currentStep, parsedData, isLoading, /* Removed chatHistory.length to allow re-trigger if needed */ toast, /* speakText (now in startConversationCycle) */]);
 
 
   const handleSendMessageToInterviewAI = async (message: string) => {
-    if (!parsedData) {
-      setError("Parsed resume data is missing.");
-      toast({ title: "Error", description: "Cannot send message, parsed data missing.", variant: "destructive" });
+    if (!parsedData || !isMountedRef.current) {
+      if (isMountedRef.current) {
+        setError("Parsed resume data is missing or component unmounted.");
+        toast({ title: "Error", description: "Cannot send message, parsed data missing or component unmounted.", variant: "destructive" });
+      }
       return;
     }
     setIsSendingMessage(true);
     setError(null);
 
     const newUserMessage: UIChatMessage = { id: crypto.randomUUID(), role: 'user', content: message, timestamp: new Date() };
+    // Update chat history immediately with user message
     setChatHistory(prev => [...prev, newUserMessage]);
 
     try {
-      const genkitHistoryForPrompt: GenkitChatMessage[] = chatHistory.map(msg => ({
+      // Use the most up-to-date chatHistory for the prompt
+      const genkitHistoryForPrompt: GenkitChatMessage[] = [...chatHistory, newUserMessage].map(msg => ({
         role: msg.role === 'user' ? 'user' : 'model',
         isUser: msg.role === 'user',
         isModel: msg.role !== 'user',
@@ -244,28 +286,36 @@ export default function OppyAiClientPage() {
       };
       
       const result = await conductInterview(input);
+      if (!isMountedRef.current) return;
+
       setChatHistory(prev => [
         ...prev, 
         { id: crypto.randomUUID(), role: 'assistant', content: result.aiMessage, timestamp: new Date() }
       ]);
-      speakText(result.aiMessage);
+      await startConversationCycle(result.aiMessage);
+
     } catch (e: any) {
       console.error("Error in AI interview chat:", e);
-      const errorMessage = "AI chat error: " + e.message;
-      setError(errorMessage);
-      const aiErrorResponse = `Sorry, I encountered an error: ${e.message}`;
-      setChatHistory(prev => [
-        ...prev, 
-        { id: crypto.randomUUID(), role: 'assistant', content: aiErrorResponse, timestamp: new Date() }
-      ]);
-      speakText(aiErrorResponse); // Speak the error message as well
-      toast({ title: "Chat Error", description: e.message || "An unknown error occurred.", variant: "destructive" });
+      if (isMountedRef.current) {
+        const errorMessage = "AI chat error: " + e.message;
+        setError(errorMessage);
+        const aiErrorResponse = `Sorry, I encountered an error. Let's try again or you can finish the interview.`;
+        setChatHistory(prev => [
+          ...prev, 
+          { id: crypto.randomUUID(), role: 'assistant', content: aiErrorResponse, timestamp: new Date() }
+        ]);
+        await startConversationCycle(aiErrorResponse); // Speak the error message
+        toast({ title: "Chat Error", description: e.message || "An unknown error occurred.", variant: "destructive" });
+      }
     } finally {
-      setIsSendingMessage(false);
+      if (isMountedRef.current) setIsSendingMessage(false);
     }
   };
   
   const handleFinishInterview = () => {
+    if (interviewInputRef.current) {
+      interviewInputRef.current.stopRecording(); // Ensure recording is stopped
+    }
     if (audioPlayerRef.current && !audioPlayerRef.current.paused) {
       audioPlayerRef.current.pause();
     }
@@ -303,11 +353,14 @@ export default function OppyAiClientPage() {
       setError("Failed to rewrite resume. Please try again. " + e.message);
       toast({ title: "Rewrite Failed", description: e.message || "An unknown error occurred.", variant: "destructive" });
     } finally {
-      setIsLoading(false);
+      if (isMountedRef.current) setIsLoading(false);
     }
   };
   
   const handleStartOver = () => {
+    if (interviewInputRef.current) {
+      interviewInputRef.current.stopRecording();
+    }
     if (audioPlayerRef.current && !audioPlayerRef.current.paused) {
       audioPlayerRef.current.pause();
     }
@@ -373,9 +426,15 @@ export default function OppyAiClientPage() {
         return (
           <div className="w-full max-w-3xl space-y-6">
             <InterviewInput
+              ref={interviewInputRef}
               parsedData={parsedData}
               chatHistory={chatHistory}
-              onSendMessage={handleSendMessageToInterviewAI}
+              onSendMessage={handleSendMessageToInterviewAI} // This prop might become redundant if auto-send is reliable
+              onTranscriptionComplete={(transcript) => {
+                if (transcript.trim() && !isSendingMessage) { // Ensure not already sending
+                  handleSendMessageToInterviewAI(transcript.trim());
+                }
+              }}
               onFinishInterview={handleFinishInterview}
               disabled={isLoading} 
               isSendingMessage={isSendingMessage} 
@@ -451,3 +510,5 @@ export default function OppyAiClientPage() {
     </div>
   );
 }
+
+    
