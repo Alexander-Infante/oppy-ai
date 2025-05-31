@@ -113,7 +113,7 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
       if (!isMountedRef.current) return;
       setIsRecording(true);
       setCurrentMessage(''); 
-      toast({ title: "Listening...", description: "Speak now. Stops after 10s of silence or manual stop." });
+      toast({ title: "Listening...", description: "Speak now. Stops after 7s of silence or manual stop." });
     };
 
     recognition.onresult = (event) => {
@@ -131,7 +131,7 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
             console.log("Silence timeout, stopping recognition.");
             stopRecordingInternal();
         }
-      }, 10000); 
+      }, 7000); 
     };
 
     recognition.onerror = (event) => {
@@ -284,7 +284,7 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
         </CardTitle>
         <CardDescription>
           Chat with our AI. Voice input starts automatically after AI speaks.
-          Recording allows pauses and stops after 10s of silence or manual stop.
+          Recording allows pauses and stops after 7s of silence or manual stop.
         </CardDescription>
          {hasMicPermission === false && (
             <Alert variant="destructive" className="mt-2">
@@ -358,7 +358,7 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
           </Button>
           <Textarea
             id="interview-message"
-            placeholder={isRecording ? "Listening... (Stops after 10s silence)" : "Type or click mic to speak..."}
+            placeholder={isRecording ? "Listening... (Stops after 7s silence)" : "Type or click mic to speak..."}
             value={currentMessage}
             onChange={(e) => setCurrentMessage(e.target.value)}
             rows={1}
