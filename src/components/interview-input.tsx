@@ -117,7 +117,7 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
       if (!isMountedRef.current) return;
       setIsRecording(true);
       setCurrentMessage(''); 
-      toast({ title: "Listening...", description: "Speak now. Stops after 7s of silence or manual stop." });
+      toast({ title: "Listening...", description: "Speak now. Stops after 4s of silence or manual stop." });
     };
 
     recognition.onresult = (event) => {
@@ -134,7 +134,7 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
         if (speechRecognitionRef.current && isRecording && isMountedRef.current) {
             stopRecordingInternal();
         }
-      }, 7000); 
+      }, 4000); 
     };
 
     recognition.onerror = (event) => {
@@ -175,7 +175,7 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
       toast({ variant: 'destructive', title: 'Could not start recording', description: String(e) });
       if (isMountedRef.current) setIsRecording(false);
     }
-  }, [hasMicPermission, toast, onTranscriptionComplete, isRecording, currentMessage]); // Added currentMessage
+  }, [hasMicPermission, toast, onTranscriptionComplete, isRecording, currentMessage]);
 
 
   const stopRecordingInternal = useCallback(() => {
@@ -278,7 +278,7 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
         </CardTitle>
         <CardDescription>
           Chat with our AI. Voice input starts automatically after AI speaks.
-          Recording allows pauses and stops after 7s of silence or manual stop.
+          Recording allows pauses and stops after 4s of silence or manual stop.
         </CardDescription>
          {hasMicPermission === false && (
             <Alert variant="destructive" className="mt-2">
@@ -340,25 +340,25 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
         </ScrollArea>
       </CardContent>
       <CardFooter className="p-4 sm:p-6 border-t">
-        <div className="flex w-full items-end space-x-2"> {/* Changed items-center to items-end */}
+        <div className="flex w-full items-end space-x-2">
           <Button 
             variant="outline" 
             size="icon" 
             disabled={disabled || isSendingMessage || hasMicPermission === false || hasMicPermission === null} 
             onClick={handleMicClick}
             aria-label={isRecording ? "Stop recording" : "Start voice input"}
-            className="self-end mb-[1px]" // Align button with bottom of potentially taller textarea
+            className="self-end mb-[1px]"
           >
             {isRecording ? <StopCircle className="h-5 w-5 text-destructive" /> : <Mic className="h-5 w-5" />}
           </Button>
           <Textarea
             ref={textareaRef}
             id="interview-message"
-            placeholder={isRecording ? "Listening... (Stops after 7s silence)" : "Type or click mic to speak..."}
+            placeholder={isRecording ? "Listening... (Stops after 4s silence)" : "Type or click mic to speak..."}
             value={currentMessage}
             onChange={(e) => setCurrentMessage(e.target.value)}
             disabled={disabled || isSendingMessage || isRecording} 
-            className="text-base flex-grow resize-none min-h-[40px] max-h-[150px] overflow-y-auto" // Added max-h and overflow-y-auto
+            className="text-base flex-grow resize-none min-h-[40px] max-h-[150px] overflow-y-auto"
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
@@ -371,7 +371,7 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
             disabled={!currentMessage.trim() || disabled || isSendingMessage || isRecording}
             size="icon"
             aria-label="Send message"
-            className="self-end mb-[1px]" // Align button with bottom
+            className="self-end mb-[1px]"
           >
             {isSendingMessage ? (
               <Loader2 className="h-5 w-5 animate-spin" />
@@ -387,7 +387,7 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
           }} 
           disabled={disabled || isSendingMessage} 
           variant="default"
-          className="ml-4 self-end mb-[1px]" // Align button with bottom
+          className="ml-4 self-end mb-[1px]"
         >
           Finish Interview <ChevronRight className="ml-1 h-4 w-4"/>
         </Button>
@@ -397,6 +397,4 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
 });
 
 InterviewInput.displayName = "InterviewInput";
-    
-
     
