@@ -289,7 +289,7 @@ export default function ResumeBoostClientPage() {
       <header className="mb-8 text-center">
         <div className="flex items-center justify-center mb-2">
           <Rocket className="h-12 w-12 text-primary mr-3" />
-          <h1 className="text-4xl font-bold tracking-tight">ResumeBoost</h1>
+          <h1 className="text-4xl font-bold tracking-tight">OppyAI</h1>
         </div>
         <p className="text-lg text-muted-foreground">
           AI-powered resume rewriting to help you land your dream job.
@@ -311,7 +311,7 @@ export default function ResumeBoostClientPage() {
       </main>
       
       <footer className="mt-12 text-center text-sm text-muted-foreground">
-        <p>&copy; {new Date().getFullYear()} ResumeBoost. All rights reserved.</p>
+        <p>&copy; {new Date().getFullYear()} OppyAI. All rights reserved.</p>
         <p>Powered by Genkit and Next.js</p>
       </footer>
     </div>

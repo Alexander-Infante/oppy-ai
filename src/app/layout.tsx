@@ -15,7 +15,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: 'Oppy AI - AI Powered Resume Rewriter',
+  title: 'OppyAI - AI Powered Resume Rewriter',
   description: 'Upload your resume, get AI-driven feedback, and rewrite it for success!',
 };
 
@@ -33,4 +33,3 @@ export default function RootLayout({
     </html>
   );
 }
-
