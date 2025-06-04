@@ -160,7 +160,13 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
 
     recognition.onerror = (event) => {
       if (!isMountedRef.current) return;
-      console.error('Speech recognition error:', event.error);
+      
+      if (event.error === 'no-speech') {
+        console.info('Speech recognition: No speech detected.');
+      } else {
+        console.error('Speech recognition error:', event.error);
+      }
+      
       let errorMessage = `An error occurred: ${event.error}.`;
       if (event.error === 'no-speech') {
         errorMessage = 'No speech was detected. Please try speaking louder or more clearly.';
@@ -188,7 +194,7 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
       } else if (!finalTranscript && isMountedRef.current) { // ensure isMounted
         // Only toast if it wasn't a deliberate stop with no speech for text input mode switch
         if (!showTextInput) { // if we are not in text input mode
-             toast({ title: "Recording Stopped", description: "No speech was captured to transcribe.", variant: "default" });
+             toast({ title: "Recording Stopped", description: "No speech was captured to transcribe. (4s silence)", variant: "default" });
         }
       }
     };
@@ -262,7 +268,8 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
     if (isRecording) {
       stopRecordingInternal();
     } else {
-      startRecording(); // This will also set showTextInput to false
+      if (isMountedRef.current && showTextInput) setShowTextInput(false); // Switch to voice mode if in text
+      startRecording(); 
     }
   };
 
@@ -296,6 +303,19 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
     }
   }, [chatHistory]);
 
+  const getCardDescription = () => {
+    if (isRecording) return "Listening... (Stops after 4s silence or manual stop)";
+    if (showTextInput) return "Type your response or switch to voice.";
+    return "Click the mic to speak or keyboard to type.";
+  };
+
+  const getTextareaPlaceholder = () => {
+    if (isRecording) return "Listening... your speech will appear here...";
+    if (showTextInput) return "Type your message here...";
+    return "Your transcribed speech will appear here if mic is active.";
+  };
+
+
   return (
     <Card className="w-full max-w-2xl shadow-xl flex flex-col h-[70vh] sm:h-[600px]">
       <CardHeader>
@@ -304,9 +324,7 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
           AI Interview Chat
         </CardTitle>
         <CardDescription>
-          {isRecording ? "Listening... (Stops after 4s silence or manual stop)" : 
-           showTextInput ? "Type your response or switch to voice." : 
-           "Click the mic to speak or keyboard to type."}
+         {getCardDescription()}
         </CardDescription>
          {hasMicPermission === false && (
             <Alert variant="destructive" className="mt-2">
@@ -395,7 +413,7 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
               <Textarea
                 ref={textareaRef}
                 id="interview-message"
-                placeholder={isRecording ? "Listening..." : "Type your message..."}
+                placeholder={getTextareaPlaceholder()}
                 value={currentMessage}
                 onChange={(e) => setCurrentMessage(e.target.value)}
                 disabled={disabled || isSendingMessage || isRecording} 
@@ -422,6 +440,12 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
               </Button>
             </>
           )}
+           {!showTextInput && currentMessage && (
+             <div className="flex-grow p-2 border rounded-md bg-muted text-muted-foreground text-sm min-h-[40px] max-h-[150px] overflow-y-auto self-end mb-[1px]">
+                {currentMessage}
+             </div>
+            )
+           }
         </div>
         <Button 
           onClick={() => {
@@ -430,7 +454,7 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
           }} 
           disabled={disabled || isSendingMessage} 
           variant="default"
-          className={`ml-4 self-end mb-[1px] ${!showTextInput ? 'flex-grow sm:flex-grow-0' : ''}`} // Allow Finish button to take more space if text input is hidden
+          className={`ml-4 self-end mb-[1px] ${!showTextInput && !currentMessage ? 'flex-grow sm:flex-grow-0' : ''}`} 
         >
           Finish Interview <ChevronRight className="ml-1 h-4 w-4"/>
         </Button>
@@ -440,6 +464,8 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
 });
 
 InterviewInput.displayName = "InterviewInput";
+    
+
     
 
     

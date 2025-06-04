@@ -82,23 +82,22 @@ export default function OppyAiClientPage() {
           }),
         })
         .then(async response => {
+          let errorDetail = `ElevenLabs API Error: ${response.statusText}`; // Default error message
           if (!response.ok) {
-            let errorDetail = `ElevenLabs API Error: ${response.statusText}`; // Default error message
             try {
-              const errorData = await response.json(); // Attempt to parse as JSON
+              const errorData = await response.json(); // Try to parse JSON first
 
               if (errorData && typeof errorData === 'object' && errorData.detail && typeof errorData.detail.message === 'string' && errorData.detail.message.trim() !== '') {
-                console.error("ElevenLabs API error (JSON with detail.message):", errorData);
+                console.error("ElevenLabs API detailed error message:", errorData.detail.message, "Full error object:", errorData);
                 errorDetail = `Failed to generate speech: ${errorData.detail.message}.`;
               } else if (errorData && typeof errorData === 'object' && Object.keys(errorData).length > 0) {
                 console.warn("ElevenLabs API error (JSON, unexpected structure or empty message):", errorData, "Status:", response.statusText);
                 errorDetail = `Failed to generate speech. API returned: ${JSON.stringify(errorData)}. Status: ${response.statusText}`;
-              } else {
-                console.warn(`ElevenLabs API returned non-standard JSON error (or empty JSON object {}). Status: ${response.statusText}`);
+              } else { // This covers errorData being {} or not an object with keys
+                console.warn(`ElevenLabs API returned non-standard JSON error (or empty JSON object {}). Status: ${response.statusText}`, response.statusText);
                 errorDetail = `Failed to generate speech: ${response.statusText}.`; // Fallback to statusText
               }
-            } catch (jsonError) {
-              // This catch block is for when response.json() itself fails (i.e., response body is not valid JSON)
+            } catch (jsonError) { // This catch block is for when response.json() itself fails
               console.warn("ElevenLabs API error response was not JSON. Attempting to read as text.");
               try {
                 const errorText = await response.text();
@@ -106,7 +105,7 @@ export default function OppyAiClientPage() {
                 errorDetail = `Failed to generate speech: ${response.statusText} - ${errorText.substring(0, 100)}`;
               } catch (textError) {
                 console.error("ElevenLabs API error: Could not parse error response as JSON or Text.");
-                // errorDetail will remain the default: `ElevenLabs API Error: ${response.statusText}` set before this try-catch
+                // errorDetail remains the default from before this try-catch: `ElevenLabs API Error: ${response.statusText}`
               }
             }
             toast({
@@ -273,7 +272,7 @@ export default function OppyAiClientPage() {
       };
       fetchInitialAIMessage();
     }
-  }, [currentStep, parsedData, isLoading, toast, chatHistory.length]);
+  }, [currentStep, parsedData, isLoading, toast, chatHistory.length, speakText]);
 
 
   const handleSendMessageToInterviewAI = async (message: string) => {
@@ -531,5 +530,7 @@ export default function OppyAiClientPage() {
     </div>
   );
 }
+
+    
 
     
