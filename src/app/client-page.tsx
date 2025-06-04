@@ -83,13 +83,22 @@ export default function OppyAiClientPage() {
         })
         .then(async response => {
           if (!response.ok) {
-            let errorDetail = `ElevenLabs API Error: ${response.statusText}`;
+            let errorDetail = `ElevenLabs API Error: ${response.statusText}`; // Default error message
             try {
-              const errorData = await response.json();
-              console.error("ElevenLabs API error (JSON):", errorData);
-              errorDetail = `Failed to generate speech: ${errorData.detail?.message || response.statusText}.`;
+              const errorData = await response.json(); // Attempt to parse as JSON
+
+              if (errorData && typeof errorData === 'object' && errorData.detail && typeof errorData.detail.message === 'string' && errorData.detail.message.trim() !== '') {
+                console.error("ElevenLabs API error (JSON with detail.message):", errorData);
+                errorDetail = `Failed to generate speech: ${errorData.detail.message}.`;
+              } else if (errorData && typeof errorData === 'object' && Object.keys(errorData).length > 0) {
+                console.warn("ElevenLabs API error (JSON, unexpected structure or empty message):", errorData, "Status:", response.statusText);
+                errorDetail = `Failed to generate speech. API returned: ${JSON.stringify(errorData)}. Status: ${response.statusText}`;
+              } else {
+                console.warn(`ElevenLabs API returned non-standard JSON error (or empty JSON object {}). Status: ${response.statusText}`);
+                errorDetail = `Failed to generate speech: ${response.statusText}.`; // Fallback to statusText
+              }
             } catch (jsonError) {
-              // If parsing JSON fails, try to get text
+              // This catch block is for when response.json() itself fails (i.e., response body is not valid JSON)
               console.warn("ElevenLabs API error response was not JSON. Attempting to read as text.");
               try {
                 const errorText = await response.text();
@@ -97,6 +106,7 @@ export default function OppyAiClientPage() {
                 errorDetail = `Failed to generate speech: ${response.statusText} - ${errorText.substring(0, 100)}`;
               } catch (textError) {
                 console.error("ElevenLabs API error: Could not parse error response as JSON or Text.");
+                // errorDetail will remain the default: `ElevenLabs API Error: ${response.statusText}` set before this try-catch
               }
             }
             toast({
@@ -110,7 +120,7 @@ export default function OppyAiClientPage() {
           return response.blob();
         })
         .then(audioBlob => {
-          if (!audioBlob) return; // Already handled error in previous .then
+          if (!audioBlob) return; // Error already handled in previous .then
           const audioUrl = URL.createObjectURL(audioBlob);
           
           if (!audioPlayerRef.current) {
@@ -141,7 +151,7 @@ export default function OppyAiClientPage() {
       } else {
         console.warn(
             "ElevenLabs API key (NEXT_PUBLIC_ELEVENLABS_API_KEY) is not set or is empty in your .env file. " +
-            "Ensure it's correctly set and RESTART your development server. " +
+            "Ensure it's correctly set and RESTART your development server if it was recently changed. " +
             "Attempting to use browser's built-in Text-to-Speech as a fallback."
         );
         if ('speechSynthesis' in window) {
@@ -263,7 +273,7 @@ export default function OppyAiClientPage() {
       };
       fetchInitialAIMessage();
     }
-  }, [currentStep, parsedData, isLoading, toast, chatHistory.length /* re-added to prevent re-fetch on every history update */]);
+  }, [currentStep, parsedData, isLoading, toast, chatHistory.length]);
 
 
   const handleSendMessageToInterviewAI = async (message: string) => {
@@ -440,9 +450,9 @@ export default function OppyAiClientPage() {
               ref={interviewInputRef}
               parsedData={parsedData}
               chatHistory={chatHistory}
-              onSendMessage={handleSendMessageToInterviewAI} // This prop might become redundant if auto-send is reliable
+              onSendMessage={handleSendMessageToInterviewAI} 
               onTranscriptionComplete={(transcript) => {
-                if (transcript.trim() && !isSendingMessage) { // Ensure not already sending
+                if (transcript.trim() && !isSendingMessage) { 
                   handleSendMessageToInterviewAI(transcript.trim());
                 }
               }}
