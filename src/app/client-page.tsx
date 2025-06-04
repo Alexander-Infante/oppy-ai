@@ -6,7 +6,7 @@ import { parseResume } from '@/ai/flows/parse-resume';
 import type { RewriteResumeInput, RewriteResumeOutput } from '@/ai/flows/rewrite-resume';
 import { rewriteResume } from '@/ai/flows/rewrite-resume';
 import { InterviewInput, type InterviewInputHandle } from '@/components/interview-input';
-import type { ChatMessage as SDKChatMessage } from '@elevenlabs/react'; 
+import type { ChatMessage as SDKChatMessage } from '@elevenlabs/react';
 import { ResumeUploader } from '@/components/resume-uploader';
 import { ResumeEditor } from '@/components/resume-editor';
 import { Button } from '@/components/ui/button';
@@ -23,11 +23,11 @@ export default function OppyAIClientPage() {
   const [resumeFile, setResumeFile] = useState<File | null>(null);
   const [resumeTextContent, setResumeTextContent] = useState<string>('');
   const [resumeDataUri, setResumeDataUri] = useState<string>('');
-  
+
   const [parsedData, setParsedData] = useState<ParseResumeOutput | null>(null);
-  const [finalInterviewChatHistory, setFinalInterviewChatHistory] = useState<SDKChatMessage[]>([]); 
+  const [finalInterviewChatHistory, setFinalInterviewChatHistory] = useState<SDKChatMessage[]>([]);
   const [rewrittenResume, setRewrittenResume] = useState<RewriteResumeOutput | null>(null);
-  
+
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [loadingMessage, setLoadingMessage] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
@@ -47,15 +47,15 @@ export default function OppyAIClientPage() {
   useEffect(() => {
     let timer: NodeJS.Timeout;
     if (isLoading) {
-      setProgress(0); 
+      setProgress(0);
       let currentProgressVal = 0;
       timer = setInterval(() => {
         currentProgressVal += 10;
-        if (currentProgressVal > 100) currentProgressVal = 100; 
+        if (currentProgressVal > 100) currentProgressVal = 100;
         setProgress(currentProgressVal);
       }, 200);
     } else {
-      setProgress(100); 
+      setProgress(100);
     }
     return () => clearInterval(timer);
   }, [isLoading]);
@@ -66,7 +66,7 @@ export default function OppyAIClientPage() {
     setResumeDataUri(dataUri);
     setError(null);
     setCurrentStep('parse');
-    handleParseResume(dataUri); 
+    handleParseResume(dataUri);
   };
 
   const handleParseResume = async (dataUri: string) => {
@@ -85,24 +85,24 @@ export default function OppyAIClientPage() {
       if (isMountedRef.current) {
         setError("Failed to parse resume. Please try again. " + e.message);
         toast({ title: "Parsing Failed", description: e.message || "An unknown error occurred.", variant: "destructive" });
-        setCurrentStep('upload'); 
+        setCurrentStep('upload');
       }
     } finally {
       if (isMountedRef.current) setIsLoading(false);
     }
   };
-  
+
   const handleFinishInterview = (interviewChatHistory: SDKChatMessage[]) => {
     if (!isMountedRef.current) return;
 
-    setFinalInterviewChatHistory(interviewChatHistory); 
+    setFinalInterviewChatHistory(interviewChatHistory);
     setCurrentStep('rewrite');
-    
+
     const interviewInsights = interviewChatHistory
-      .filter(msg => msg.role === 'user' || msg.role === 'assistant') 
-      .map(msg => `${msg.role === 'user' ? 'User' : 'AI'}: ${msg.text}`) 
-      .join('\n\n'); 
-      
+      .filter(msg => msg.role === 'user' || msg.role === 'assistant')
+      .map(msg => `${msg.role === 'user' ? 'User' : 'AI'}: ${msg.text}`)
+      .join('\n\n');
+
     handleRewriteResume(interviewInsights);
   };
 
@@ -120,8 +120,8 @@ export default function OppyAIClientPage() {
     setError(null);
     try {
       const input: RewriteResumeInput = {
-        resumeDataUri: resumeDataUri, 
-        interviewData: interviewSummary, 
+        resumeDataUri: resumeDataUri,
+        interviewData: interviewSummary,
       };
       const result = await rewriteResume(input);
       if (!isMountedRef.current) return;
@@ -138,7 +138,7 @@ export default function OppyAIClientPage() {
       if (isMountedRef.current) setIsLoading(false);
     }
   };
-  
+
   const handleStartOver = () => {
     if (isMountedRef.current) {
       // SDK in InterviewInput should handle its own cleanup
@@ -157,7 +157,7 @@ export default function OppyAIClientPage() {
   };
 
   const renderStepContent = () => {
-    if (isLoading && (currentStep === 'parse' || currentStep === 'rewrite' || (currentStep === 'interview' && !parsedData))) { 
+    if (isLoading && (currentStep === 'parse' || currentStep === 'rewrite' || (currentStep === 'interview' && !parsedData))) {
       return (
         <Card className="w-full max-w-lg shadow-lg">
           <CardHeader>
@@ -175,7 +175,7 @@ export default function OppyAIClientPage() {
       );
     }
 
-    if (error && currentStep !== 'interview') { 
+    if (error && currentStep !== 'interview') { // Keep interview UI even on some errors if parsedData exists
       return (
          <Card className="w-full max-w-lg shadow-lg">
           <CardHeader>
@@ -195,27 +195,29 @@ export default function OppyAIClientPage() {
     switch (currentStep) {
       case 'upload':
         return <ResumeUploader onUpload={handleResumeUpload} disabled={isLoading} />;
-      case 'parse': 
-        return <p>Preparing to parse...</p>; 
+      case 'parse':
+        // This state is usually very brief, covered by the main isLoading block
+        return <p>Preparing to parse...</p>;
       case 'interview':
-        if (!parsedData) return <p>Error: Parsed data not available. Please <Button variant="link" onClick={handleStartOver}>start over</Button>.</p>;
+        if (!parsedData) return <p>Error: Parsed data not available for interview. Please <Button variant="link" onClick={handleStartOver}>start over</Button>.</p>;
         return (
           <div className="w-full max-w-3xl space-y-6">
             <InterviewInput
               ref={interviewInputRef}
               parsedData={parsedData}
               onFinishInterview={handleFinishInterview}
-              disabled={isLoading} 
+              disabled={isLoading} // isLoading here refers to parse/rewrite, InterviewInput has its own internal loading
             />
           </div>
         );
-      case 'rewrite': 
-         return <p>Preparing to rewrite...</p>; 
+      case 'rewrite':
+         // This state is usually very brief, covered by the main isLoading block
+         return <p>Preparing to rewrite...</p>;
       case 'review':
         if (!rewrittenResume) return <p>Error: Rewritten data not available. Please <Button variant="link" onClick={handleStartOver}>start over</Button>.</p>;
         return (
           <ResumeEditor
-            originalResumeText={resumeTextContent} 
+            originalResumeText={resumeTextContent}
             rewrittenResumeOutput={rewrittenResume}
             onStartOver={handleStartOver}
           />
@@ -232,17 +234,21 @@ export default function OppyAIClientPage() {
     rewrite: 'Rewriting Your Resume',
     review: 'Review Your New Resume',
   };
-  
+
   const stepIcons: Record<Step, React.ElementType> = {
     upload: Rocket,
-    parse: Loader2, 
+    parse: Loader2, // Represents processing
     interview: MessageSquare,
-    rewrite: Loader2, 
-    review: Rocket,
+    rewrite: Loader2, // Represents processing
+    review: Rocket, // Represents completion/next action
   };
 
   const CurrentStepIcon = stepIcons[currentStep] || Rocket;
-  const showStepTitleCard = !isLoading || (currentStep === 'interview' && parsedData);
+  // Show step title card unless it's the interview step AND there's no critical error AND parsedData is available (interview card has its own title)
+  // OR if it's a loading state for parse/rewrite.
+  const showStepTitleCard =
+    !(currentStep === 'interview' && parsedData && !error) ||
+    (isLoading && (currentStep === 'parse' || currentStep === 'rewrite'));
 
 
   return (
@@ -258,11 +264,11 @@ export default function OppyAIClientPage() {
       </header>
 
       <main className="w-full flex flex-col items-center">
-        {showStepTitleCard && (currentStep !== 'interview' || !parsedData || error ) && (
+        {showStepTitleCard && ! (isLoading && (currentStep === 'parse' || currentStep === 'rewrite')) && (
             <Card className="w-full max-w-md mb-6 shadow-md">
                 <CardHeader>
                     <CardTitle className="text-xl text-center flex items-center justify-center">
-                        <CurrentStepIcon className={`mr-2 h-6 w-6 ${(isLoading && (currentStep === 'parse' || currentStep === 'rewrite')) ? 'animate-spin' : ''}`} />
+                        <CurrentStepIcon className={`mr-2 h-6 w-6 ${currentStep === 'parse' || currentStep === 'rewrite' ? (isLoading ? 'animate-spin' : '') : ''}`} />
                         {stepTitles[currentStep]}
                     </CardTitle>
                 </CardHeader>
@@ -270,7 +276,7 @@ export default function OppyAIClientPage() {
         )}
         {renderStepContent()}
       </main>
-      
+
       <footer className="mt-12 text-center text-sm text-muted-foreground">
         <p>&copy; {new Date().getFullYear()} OppyAI. All rights reserved.</p>
         <p>Powered by Genkit and Next.js</p>
@@ -278,4 +284,3 @@ export default function OppyAIClientPage() {
     </div>
   );
 }
-
