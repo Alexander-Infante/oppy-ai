@@ -7,384 +7,319 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Textarea } from '@/components/ui/textarea';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Send, Loader2, Mic, StopCircle, Sparkles, User, Bot, ChevronRight, AlertTriangle, Keyboard } from 'lucide-react';
+import { Send, Loader2, Mic, StopCircle, Sparkles, User, Bot, ChevronRight, AlertTriangle, Keyboard, Zap, WifiOff } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 
-// UI-specific chat message type
 export interface UIChatMessage {
   id: string;
-  role: 'user' | 'assistant';
+  role: 'user' | 'assistant' | 'system';
   content: string;
   timestamp: Date;
+  audioUrl?: string;
+  isPlaying?: boolean;
 }
 
+const USER_AGENT_ID = 'agent_01jwwh679kegrbsv4mmgy96tfe'; // User's provided agent ID
+
 export interface InterviewInputHandle {
-  startRecording: () => void;
-  stopRecording: () => void;
+  // Methods exposed via ref, if any, can be defined here.
+  // For now, most interaction will be internal or via props.
 }
 
 interface InterviewInputProps {
   parsedData: ParseResumeOutput;
-  chatHistory: UIChatMessage[];
-  onSendMessage: (message: string) => Promise<void>;
-  onTranscriptionComplete?: (transcript: string) => void;
-  onFinishInterview: () => void;
-  disabled?: boolean;
-  isSendingMessage: boolean;
+  onFinishInterview: (chatHistory: UIChatMessage[]) => void;
+  disabled?: boolean; // General disable flag
 }
 
-// NOTE: This is an assumed endpoint for ElevenLabs Conversational API.
-// Please verify with official ElevenLabs documentation.
-const ELEVENLABS_CONVERSATIONAL_API_ENDPOINT = "wss://api.elevenlabs.io/v1/voice-chat"; 
-const AI_VOICE_ID_FOR_CONVERSATION = "21m00Tcm4TlvDq8ikWAM"; // Example: Rachel's voice for the AI
-const CONVERSATIONAL_MODEL_ID = "eleven_turbo_v2"; // Or your preferred model for conversation
-const INACTIVITY_TIMEOUT_MS = 4000; // 4 seconds of silence
+const BOS_MESSAGE = JSON.stringify({ type: "user_input_start" });
+const EOS_MESSAGE = JSON.stringify({ type: "user_input_end" });
 
 export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputProps>(({
-  chatHistory,
-  onSendMessage,
-  onTranscriptionComplete,
+  parsedData,
   onFinishInterview,
   disabled,
-  isSendingMessage
 }, ref) => {
-  const [currentMessage, setCurrentMessage] = useState('');
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const { toast } = useToast();
-
-  const [isRecording, setIsRecording] = useState(false);
-  const [showTextInput, setShowTextInput] = useState(false);
-  const [hasMicPermission, setHasMicPermission] = useState<boolean | null>(null);
   const isMountedRef = useRef(false);
+  const audioPlayerRef = useRef<HTMLAudioElement | null>(null);
+
+  const [socket, setSocket] = useState<WebSocket | null>(null);
+  const [isConnecting, setIsConnecting] = useState<boolean>(false);
+  const [isConnected, setIsConnected] = useState<boolean>(false);
+  const [isRecording, setIsRecording] = useState<boolean>(false);
+  const [chatHistory, setChatHistory] = useState<UIChatMessage[]>([]);
+  const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null);
+  const [textInput, setTextInput] = useState<string>('');
+  const [showTextInput, setShowTextInput] = useState(false);
+  const [currentAssistantMessageId, setCurrentAssistantMessageId] = useState<string | null>(null);
+  const [currentPlayingAudioId, setCurrentPlayingAudioId] = useState<string | null>(null);
+  const [apiError, setApiError] = useState<string | null>(null);
 
   const elevenLabsApiKey = process.env.NEXT_PUBLIC_ELEVENLABS_API_KEY;
-  const [sttAvailable, setSttAvailable] = useState(false); 
-
-  const wsRef = useRef<WebSocket | null>(null);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const audioChunksRef = useRef<Blob[]>([]); 
-  const inactivityTimerRef = useRef<NodeJS.Timeout | null>(null);
-  const accumulatedTranscript = useRef<string>('');
-
 
   useEffect(() => {
     isMountedRef.current = true;
-    if (elevenLabsApiKey && elevenLabsApiKey.trim() !== "") {
-      setSttAvailable(true);
-    } else {
-      setSttAvailable(false);
-      console.warn("ElevenLabs API Key (NEXT_PUBLIC_ELEVENLABS_API_KEY) is missing or empty. ElevenLabs Conversational Voice Chat will be unavailable. Ensure the key is set in your .env file and RESTART your development server if changes were made.");
-    }
     return () => {
       isMountedRef.current = false;
-      if (wsRef.current) {
-        wsRef.current.close();
+      if (socket) {
+        socket.close();
       }
-      if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
-        mediaRecorderRef.current.stop();
+      if (mediaRecorder && mediaRecorder.state === "recording") {
+        mediaRecorder.stop();
       }
-      if (inactivityTimerRef.current) {
-        clearTimeout(inactivityTimerRef.current);
+      if (audioPlayerRef.current) {
+        audioPlayerRef.current.pause();
+        audioPlayerRef.current.src = "";
       }
     };
-  }, [elevenLabsApiKey]);
+  }, [socket, mediaRecorder]);
 
-  useEffect(() => {
-    if (textareaRef.current && showTextInput) {
-      textareaRef.current.style.height = 'auto'; 
-      const scrollHeight = textareaRef.current.scrollHeight;
-      textareaRef.current.style.height = `${scrollHeight}px`;
+  const addMessageToHistory = useCallback((message: Omit<UIChatMessage, 'id' | 'timestamp'>) => {
+    if (!isMountedRef.current) return;
+    const newMessage = { ...message, id: crypto.randomUUID(), timestamp: new Date() } as UIChatMessage;
+    setChatHistory(prev => [...prev, newMessage]);
+    if (message.role === 'assistant' && !message.audioUrl) { // If AI text comes without immediate audio
+      setCurrentAssistantMessageId(newMessage.id);
     }
-  }, [currentMessage, showTextInput]);
+    return newMessage.id;
+  }, []);
+  
+  const updateAssistantMessageContent = useCallback((id: string, contentChunk: string) => {
+    if (!isMountedRef.current) return;
+    setChatHistory(prev => prev.map(msg => 
+      msg.id === id && msg.role === 'assistant' 
+        ? { ...msg, content: msg.content + contentChunk } 
+        : msg
+    ));
+  }, []);
 
-  const resetInactivityTimer = useCallback(() => {
-    if (inactivityTimerRef.current) {
-      clearTimeout(inactivityTimerRef.current);
-    }
-    inactivityTimerRef.current = setTimeout(() => {
-      if (isRecording) {
-        console.info("ElevenLabs Conversational: Inactivity timeout. Attempting to finalize turn.");
-        stopRecordingInternal(false, true); // dueToTimeout = true
-      }
-    }, INACTIVITY_TIMEOUT_MS);
-  }, [isRecording]); 
-
-  const stopRecordingInternal = useCallback((calledByToggleMode = false, dueToTimeout = false) => {
-    if (inactivityTimerRef.current) {
-      clearTimeout(inactivityTimerRef.current);
-      inactivityTimerRef.current = null;
-    }
-
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
-      mediaRecorderRef.current.stop(); 
-    }
+  const playAudio = useCallback((audioBase64: string, messageIdToPlay?: string) => {
+    if (!isMountedRef.current || !audioBase64) return;
     
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      console.log("ElevenLabs Conversational: MediaRecorder stopped or stopping. Sending EOS-like signal (empty JSON).");
-      wsRef.current.send(JSON.stringify({ "text": " " })); 
-    }
-    
-    if (calledByToggleMode && !isRecording && isMountedRef.current) {
-      setIsRecording(false); 
-    }
-  }, [isRecording]);
-
-
-  const startRecording = useCallback(async () => {
-    if (!isMountedRef.current || !sttAvailable || hasMicPermission === false) {
-      if (!sttAvailable) {
-        toast({ variant: 'destructive', title: 'ElevenLabs API Unavailable', description: 'API key missing. Cannot start voice chat. Ensure NEXT_PUBLIC_ELEVENLABS_API_KEY is set and restart your server.' });
-      } else if (hasMicPermission === false) {
-        toast({ variant: 'destructive', title: 'Microphone Permission Denied' });
-      }
-      return;
-    }
-    if (isRecording) return; 
-
-    if (isMountedRef.current) {
-      setShowTextInput(false);
-      setIsRecording(true);
-      setCurrentMessage('Connecting to ElevenLabs Voice Chat...');
-      accumulatedTranscript.current = '';
-      audioChunksRef.current = [];
-    }
-
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      if (!isMountedRef.current) { stream.getTracks().forEach(track => track.stop()); return; }
-
-      if (wsRef.current && wsRef.current.readyState !== WebSocket.CLOSED) {
-        wsRef.current.close();
+      const byteCharacters = atob(audioBase64);
+      const byteNumbers = new Array(byteCharacters.length);
+      for (let i = 0; i < byteCharacters.length; i++) {
+        byteNumbers[i] = byteCharacters.charCodeAt(i);
       }
-      wsRef.current = new WebSocket(ELEVENLABS_CONVERSATIONAL_API_ENDPOINT);
-      const socket = wsRef.current;
+      const byteArray = new Uint8Array(byteNumbers);
+      const audioBlob = new Blob([byteArray], { type: 'audio/mpeg' }); // Assuming MP3 from ElevenLabs WebSocket
+      const audioUrl = URL.createObjectURL(audioBlob);
 
-      socket.onopen = () => {
-        if (!isMountedRef.current) { socket.close(); return; }
-        console.log("ElevenLabs Conversational: WebSocket Connected");
-        
-        // IMPORTANT: Consult ElevenLabs official documentation for the correct Conversational API endpoint
-        // and the *exact* required structure for this initial configuration message.
-        // The fields 'voice_id', 'model_id', and any audio format specifications are critical.
-        const initialConfig = {
-          xi_api_key: elevenLabsApiKey, // This MUST be your valid ElevenLabs API key.
-          voice_id: AI_VOICE_ID_FOR_CONVERSATION, // For the AI's voice, ensure this ID is valid.
-          model_id: CONVERSATIONAL_MODEL_ID, // Specifies the model for conversation/STT.
-          // audio_format was removed as a test - the API might not need it, or might need it specified differently.
-          enable_automatic_punctuation: true,
-          optimize_streaming_latency: 4, // 0-4, higher means more optimization
-        };
-        console.log("ElevenLabs Conversational: Sending initial configuration:", initialConfig);
-        socket.send(JSON.stringify(initialConfig));
+      if (!audioPlayerRef.current) {
+        audioPlayerRef.current = new Audio();
+      }
+      
+      audioPlayerRef.current.pause();
+      audioPlayerRef.current.src = audioUrl;
+      
+      const activeMessageId = messageIdToPlay || currentAssistantMessageId;
 
-        if(isMountedRef.current) setCurrentMessage('Listening (ElevenLabs Voice Chat)...');
-        toast({ title: "Listening (ElevenLabs Voice Chat)", description: `Speak now. Stops after ${INACTIVITY_TIMEOUT_MS / 1000}s of silence or manual stop.` });
-
-        mediaRecorderRef.current = new MediaRecorder(stream, { mimeType: 'audio/webm' }); 
-
-        mediaRecorderRef.current.ondataavailable = (event) => {
-          if (event.data.size > 0 && socket.readyState === WebSocket.OPEN) {
-            socket.send(event.data); 
-            resetInactivityTimer();
-          }
-        };
-
-        mediaRecorderRef.current.onstop = () => {
-          if (isMountedRef.current && socket.readyState === WebSocket.OPEN) {
-            console.log("ElevenLabs Conversational: MediaRecorder stopped. User audio stream ended from client side.");
-          }
-          stream.getTracks().forEach(track => track.stop());
-        };
-
-        mediaRecorderRef.current.start(250); 
-        resetInactivityTimer();
-      };
-
-      socket.onmessage = (event) => {
-        if (!isMountedRef.current) { socket.close(); return; }
-        try {
-          const data = JSON.parse(event.data as string);
-          console.log("ElevenLabs Conversational: Received message:", data);
-
-          // IMPORTANT: The message structure from Conversational API needs to be handled according to its documentation.
-          // This is a placeholder for handling user's transcript.
-          // Common fields might be 'type', 'transcript', 'is_final', 'text', 'payload.text'.
-          if (data.type === "user_transcript" || data.transcript || (data.payload && data.payload.text) ) { 
-            const transcriptText = data.transcript || (data.payload && data.payload.text) || data.text;
-            if (transcriptText) {
-              if (data.is_final || data.final || data.type === "final_transcript") { 
-                accumulatedTranscript.current += transcriptText + " ";
-                if(isMountedRef.current) setCurrentMessage(accumulatedTranscript.current.trim());
-                if (onTranscriptionComplete && accumulatedTranscript.current.trim()) {
-                    onTranscriptionComplete(accumulatedTranscript.current.trim());
-                    accumulatedTranscript.current = ''; 
-                }
-                if (inactivityTimerRef.current) clearTimeout(inactivityTimerRef.current);
-                 if(isMountedRef.current) setCurrentMessage(''); 
-              } else { 
-                if(isMountedRef.current) setCurrentMessage(accumulatedTranscript.current + transcriptText);
-                resetInactivityTimer();
-              }
-            }
-          } else if (data.type === "ai_audio_chunk") {
-            // TODO: Handle AI audio playback (deferred to a future step)
-             console.log("ElevenLabs Conversational: Received AI audio chunk (playback not implemented).");
-          } else if (data.type === "error" || data.error) {
-            const errorMsg = data.error || (data.message || "Unknown error from Voice Chat API");
-            console.warn("ElevenLabs Conversational: Error from WebSocket:", errorMsg);
-            toast({ variant: "destructive", title: "ElevenLabs Voice Chat Error", description: String(errorMsg) });
-            if (isMountedRef.current) setCurrentMessage(`Error: ${errorMsg}`);
-            stopRecordingInternal(false);
-          } else {
-             console.log("ElevenLabs Conversational: Received unhandled message type:", data.type || "N/A", data);
-          }
-        } catch (e) {
-          console.warn("ElevenLabs Conversational: Error parsing WebSocket message or unexpected message format", event.data, e);
+      if(activeMessageId) {
+        setChatHistory(prev => prev.map(msg => msg.id === activeMessageId ? { ...msg, audioUrl, isPlaying: true } : {...msg, isPlaying: false}));
+        setCurrentPlayingAudioId(activeMessageId);
+      }
+      
+      audioPlayerRef.current.play().catch(e => {
+        console.error("Error playing audio:", e);
+        toast({ title: "Audio Playback Error", description: "Could not play AI response.", variant: "destructive" });
+        if(activeMessageId) {
+          setChatHistory(prev => prev.map(msg => msg.id === activeMessageId ? { ...msg, isPlaying: false } : msg));
+          setCurrentPlayingAudioId(null);
         }
-      };
+      });
 
-      socket.onerror = (errorEvent: Event) => {
+      audioPlayerRef.current.onended = () => {
         if (!isMountedRef.current) return;
-        const eventType = errorEvent.type || 'N/A';
-        const bubbles = errorEvent.bubbles;
-        const cancelable = errorEvent.cancelable;
-
-        console.warn(
-            `ElevenLabs Conversational: WebSocket onerror event. Type: ${eventType}, Bubbles: ${bubbles}, Cancelable: ${cancelable}. Inspect the full event object (logged separately) for more details. Also check the WebSocket 'onclose' event (code/reason) and your browser's network tab for handshake issues.`
-        );
-        console.warn("ElevenLabs Conversational: Full WebSocket error event object:", errorEvent);
-        
-        toast({ variant: 'destructive', title: 'ElevenLabs Voice Chat Error', description: 'Connection failed. Check API key, network, and console.' });
-        if(isMountedRef.current) setCurrentMessage('Connection error.');
-        if (isMountedRef.current) setIsRecording(false);
-        stream.getTracks().forEach(track => track.stop());
+        if(activeMessageId) {
+          setChatHistory(prev => prev.map(msg => msg.id === activeMessageId ? { ...msg, isPlaying: false } : msg));
+        }
+        setCurrentPlayingAudioId(null);
+        URL.revokeObjectURL(audioUrl); // Clean up blob URL
       };
-
-      socket.onclose = (event) => {
+      audioPlayerRef.current.onerror = () => {
         if (!isMountedRef.current) return;
-        console.log("ElevenLabs Conversational: WebSocket Closed. Code:", event.code, "Reason:", event.reason || "No reason provided.");
-        
-        if (event.code !== 1000 && accumulatedTranscript.current.trim() && onTranscriptionComplete) {
-             if (isMountedRef.current) {
-                onTranscriptionComplete(accumulatedTranscript.current.trim());
-                accumulatedTranscript.current = '';
-             }
+         toast({ title: "Audio Playback Error", description: "Error during audio playback.", variant: "destructive" });
+        if(activeMessageId) {
+          setChatHistory(prev => prev.map(msg => msg.id === activeMessageId ? { ...msg, isPlaying: false } : msg));
         }
-        if (event.code !== 1000 && event.code !== 1005 ) { 
-            toast({
-                variant: "warning",
-                title: "ElevenLabs Voice Chat Disconnected",
-                description: `Code: ${event.code}. ${event.reason || "Check API key, network, or console."}`,
-            });
-        }
-        if(isMountedRef.current) {
-            setIsRecording(false);
-            if (currentMessage.startsWith("Listening") || currentMessage.startsWith("Connecting")) {
-                 setCurrentMessage('');
-            }
-        }
-        stream.getTracks().forEach(track => track.stop()); 
+        setCurrentPlayingAudioId(null);
+        URL.revokeObjectURL(audioUrl);
       };
 
     } catch (error) {
-      console.warn("Error starting ElevenLabs Conversational recording:", error);
-      toast({ variant: 'destructive', title: 'Voice Chat Start Failed', description: String(error) });
-      if (isMountedRef.current) {
-        setIsRecording(false);
-        setCurrentMessage('');
-      }
+        console.error("Error processing audio for playback:", error);
+        toast({ title: "Audio Processing Error", description: "Could not process AI audio.", variant: "destructive" });
     }
-  }, [sttAvailable, elevenLabsApiKey, toast, onTranscriptionComplete, hasMicPermission, isRecording, resetInactivityTimer, stopRecordingInternal, currentMessage]);
+  }, [toast, currentAssistantMessageId]);
 
 
-  useImperativeHandle(ref, () => ({
-    startRecording: () => {
-        if (sttAvailable && hasMicPermission) {
-            startRecording();
-        } else if (!sttAvailable) {
-             toast({ variant: 'destructive', title: 'ElevenLabs API Unavailable', description: 'API key missing. Cannot start voice chat automatically.' });
-        } else if (hasMicPermission === false) {
-             toast({ variant: 'destructive', title: 'Microphone Permission Denied', description: 'Cannot start voice input automatically.' });
-        }
-    },
-    stopRecording: () => stopRecordingInternal(false),
-  }));
+  const connectWebSocket = useCallback(() => {
+    if (!elevenLabsApiKey) {
+      setApiError("ElevenLabs API Key is not configured.");
+      toast({ title: "API Key Missing", description: "ElevenLabs API Key is not configured.", variant: "destructive" });
+      return;
+    }
+    if (socket && socket.readyState === WebSocket.OPEN) return;
 
-  useEffect(() => {
-    const getMicPermission = async () => {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-        if (isMountedRef.current) setHasMicPermission(true);
-        stream.getTracks().forEach(track => track.stop());
-      } catch (error) {
-        console.error('Error accessing microphone:', error);
-        if (isMountedRef.current) {
-            setHasMicPermission(false);
-            toast({
-            variant: 'destructive',
-            title: 'Microphone Access Denied',
-            description: 'Please enable microphone permissions in your browser settings for voice chat.',
-            });
-        }
+    setIsConnecting(true);
+    setApiError(null);
+    addMessageToHistory({role: 'system', content: "Connecting to AI Interviewer..."});
+
+    const wsUrl = `wss://api.elevenlabs.io/v1/ws-connect?agent_id=${USER_AGENT_ID}&authorization=${elevenLabsApiKey}`;
+    const newSocket = new WebSocket(wsUrl);
+
+    newSocket.onopen = () => {
+      if (!isMountedRef.current) return;
+      setIsConnecting(false);
+      setIsConnected(true);
+      toast({ title: "Connected!", description: "AI Interviewer is ready." });
+      addMessageToHistory({role: 'system', content: "Connected to AI Interviewer. You can start by speaking or typing."});
+      
+      const resumeContext = `
+        Here is the candidate's resume information:
+        Skills: ${parsedData.skills?.join(', ') || 'Not specified'}
+        Work Experience:
+        ${parsedData.experience?.map(exp => `- Title: ${exp.title} at ${exp.company} (${exp.dates}). Description: ${exp.description}`).join('\n') || 'Not specified'}
+        Education:
+        ${parsedData.education?.map(edu => `- Degree: ${edu.degree} from ${edu.institution} (${edu.dates}`).join('\n') || 'Not specified'}
+        Please start the interview by asking an opening question based on this resume.
+      `;
+      newSocket.send(JSON.stringify({ type: "text_input", text: resumeContext }));
+      setCurrentAssistantMessageId(addMessageToHistory({role: 'assistant', content: ""})); // Prepare for AI's first response
+    };
+
+    newSocket.onmessage = (event) => {
+      if (!isMountedRef.current) return;
+      const data = JSON.parse(event.data as string);
+
+      switch (data.type) {
+        case 'user_audio_transcribed':
+          addMessageToHistory({ role: 'user', content: data.text });
+          break;
+        case 'ai_response':
+          if(data.text_delta) { // streaming text
+            if(currentAssistantMessageId) {
+              updateAssistantMessageContent(currentAssistantMessageId, data.text_delta)
+            } else { // If no current message ID, start a new one
+              setCurrentAssistantMessageId(addMessageToHistory({role: 'assistant', content: data.text_delta}));
+            }
+          }
+          if (data.audio_delta) { // streaming audio
+             playAudio(data.audio_delta, currentAssistantMessageId);
+          }
+          if(data.is_finished) {
+             setCurrentAssistantMessageId(null); // Reset for next AI turn
+          }
+          break;
+        case 'error':
+          console.error("WebSocket API Error:", data.message);
+          setApiError(`WebSocket Error: ${data.message}`);
+          addMessageToHistory({role: 'system', content: `Error: ${data.message}`});
+          toast({ title: "AI Error", description: data.message, variant: "destructive" });
+          break;
+        default:
+          console.log("WebSocket message:", data);
       }
     };
 
-    if (hasMicPermission === null) {
-        getMicPermission();
+    newSocket.onerror = (error) => {
+      if (!isMountedRef.current) return;
+      console.error("WebSocket Error:", error);
+      setIsConnecting(false);
+      setIsConnected(false);
+      setApiError("WebSocket connection error. Please try again.");
+      addMessageToHistory({role: 'system', content: "WebSocket connection error."});
+      toast({ title: "Connection Error", description: "Failed to connect to AI Interviewer.", variant: "destructive" });
+    };
+
+    newSocket.onclose = (event) => {
+      if (!isMountedRef.current) return;
+      setIsConnecting(false);
+      setIsConnected(false);
+      if (event.wasClean) {
+        addMessageToHistory({role: 'system', content: "Disconnected from AI Interviewer."});
+      } else {
+        setApiError("Connection lost. Please check your internet or try reconnecting.");
+        addMessageToHistory({role: 'system', content: "Connection lost unexpectedly."});
+        toast({ title: "Disconnected", description: "Connection to AI Interviewer lost.", variant: "warning" });
+      }
+    };
+    setSocket(newSocket);
+  }, [elevenLabsApiKey, parsedData, socket, toast, addMessageToHistory, playAudio, updateAssistantMessageContent, currentAssistantMessageId]);
+
+  useEffect(() => {
+    if (elevenLabsApiKey && parsedData && !socket && !isConnected && !isConnecting) {
+      connectWebSocket();
     }
-  }, [toast, hasMicPermission]);
+  }, [elevenLabsApiKey, parsedData, socket, isConnected, isConnecting, connectWebSocket]);
 
 
-  const handleMicClick = () => {
-    if (!sttAvailable) {
-      toast({ variant: 'destructive', title: 'ElevenLabs API Unavailable', description: 'API key missing. Cannot use voice chat.' });
+  const handleMicClick = async () => {
+    if (!isConnected || !socket) {
+      toast({ variant: 'destructive', title: 'Not Connected', description: 'Please connect to the AI interviewer first.' });
       return;
     }
-    if (hasMicPermission === false) {
-        toast({ variant: 'destructive', title: 'Microphone Permission Denied', description: 'Please enable microphone permissions.' });
-        return;
-    }
-     if (hasMicPermission === null) { 
-        (async () => {
-            try {
-                const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-                if (isMountedRef.current) setHasMicPermission(true);
-                stream.getTracks().forEach(track => track.stop());
-                if (isMountedRef.current) handleMicClick(); 
-            } catch (error) {
-                if (isMountedRef.current) setHasMicPermission(false);
-                 toast({ variant: 'destructive', title: 'Microphone Access Denied'});
-            }
-        })();
-        return;
-    }
+    if (showTextInput) setShowTextInput(false);
 
-    if (isRecording) {
-      stopRecordingInternal();
+    if (isRecording && mediaRecorder) {
+      mediaRecorder.stop();
+      // EOS_MESSAGE will be sent in mediaRecorder.onstop
     } else {
-      if (isMountedRef.current && showTextInput) setShowTextInput(false); 
-      startRecording(); 
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const newMediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
+        setMediaRecorder(newMediaRecorder);
+        
+        socket.send(BOS_MESSAGE); // Signal start of user audio input
+
+        newMediaRecorder.ondataavailable = (event) => {
+          if (event.data.size > 0 && socket && socket.readyState === WebSocket.OPEN) {
+            const reader = new FileReader();
+            reader.onload = () => {
+              const base64Audio = (reader.result as string).split(',')[1];
+              socket.send(JSON.stringify({ type: "audio_chunk", data: base64Audio }));
+            };
+            reader.readAsDataURL(event.data);
+          }
+        };
+
+        newMediaRecorder.onstop = () => {
+          if (isMountedRef.current) setIsRecording(false);
+          stream.getTracks().forEach(track => track.stop()); // Release microphone
+          if (socket && socket.readyState === WebSocket.OPEN) {
+             socket.send(EOS_MESSAGE); // Signal end of user audio input
+          }
+          setCurrentAssistantMessageId(addMessageToHistory({role: 'assistant', content: ""})); // Prepare for AI response
+        };
+        
+        newMediaRecorder.start(500); // Collect audio in 500ms chunks
+        setIsRecording(true);
+      } catch (err) {
+        console.error("Error accessing microphone:", err);
+        toast({ title: "Microphone Error", description: "Could not access microphone.", variant: "destructive" });
+      }
     }
   };
 
+  const handleSendText = () => {
+    if (!isConnected || !socket || !textInput.trim()) return;
+    socket.send(JSON.stringify({ type: "text_input", text: textInput }));
+    addMessageToHistory({ role: 'user', content: textInput });
+    setCurrentAssistantMessageId(addMessageToHistory({role: 'assistant', content: ""})); // Prepare for AI response
+    if (isMountedRef.current) setTextInput('');
+  };
+  
   const handleToggleTextInput = () => {
-    if (isMountedRef.current) {
-        const newShowTextInputState = !showTextInput;
-        setShowTextInput(newShowTextInputState);
-        if (isRecording && newShowTextInputState) { 
-            stopRecordingInternal(true); 
-        }
+    setShowTextInput(prev => !prev);
+    if (isRecording && mediaRecorder && !showTextInput) { // if switching to text while recording
+      mediaRecorder.stop();
     }
-  };
-
-  const handleSendText = async () => { 
-    if (!currentMessage.trim() || disabled || isSendingMessage || isRecording || !showTextInput) return;
-
-    await onSendMessage(currentMessage.trim()); 
-    if (isMountedRef.current) setCurrentMessage('');
   };
 
   useEffect(() => {
@@ -396,96 +331,108 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
     }
   }, [chatHistory]);
 
+  useEffect(() => {
+    if (textareaRef.current && showTextInput) {
+      textareaRef.current.style.height = 'auto';
+      const scrollHeight = textareaRef.current.scrollHeight;
+      textareaRef.current.style.height = `${scrollHeight}px`;
+    }
+  }, [textInput, showTextInput]);
+
   const getCardDescription = () => {
-    if (!sttAvailable) return "ElevenLabs Voice Chat unavailable (API key missing). Text input only.";
-    if (hasMicPermission === false) return "Mic permission denied. Enable to use voice. Text input available.";
-    if (isRecording) return `Listening (ElevenLabs Voice Chat)... (Stops after ${INACTIVITY_TIMEOUT_MS / 1000}s silence or manual stop)`;
-    if (showTextInput) return "Type your response or switch to ElevenLabs Voice Chat.";
-    return "Click the mic for ElevenLabs Voice Chat or keyboard to type.";
+    if (!elevenLabsApiKey) return "ElevenLabs API Key missing. Voice Chat unavailable.";
+    if (isConnecting) return "Connecting to AI Interviewer...";
+    if (!isConnected) return "Disconnected. Attempting to reconnect or check API key.";
+    if (isRecording) return "Listening...";
+    if (currentPlayingAudioId) return "AI is speaking...";
+    if (showTextInput) return "Type your response or switch to voice chat.";
+    return "Click the mic for voice chat or keyboard to type.";
   };
 
-  const getTextareaPlaceholder = () => {
-    if (!sttAvailable || hasMicPermission === false) return "Voice chat unavailable. Type here.";
-    if (isRecording) return "Listening (ElevenLabs Voice Chat)... your speech will appear here...";
-    if (showTextInput) return "Type your message here...";
-    return "Click mic to start speaking with ElevenLabs Voice Chat.";
+  const handleFinish = () => {
+    if (socket) {
+      socket.close();
+      setSocket(null);
+    }
+    if (mediaRecorder && mediaRecorder.state === "recording") {
+      mediaRecorder.stop();
+    }
+    setIsConnected(false);
+    onFinishInterview(chatHistory);
   };
-
 
   return (
     <Card className="w-full max-w-2xl shadow-xl flex flex-col h-[70vh] sm:h-[600px]">
       <CardHeader>
         <CardTitle className="text-2xl flex items-center">
           <Sparkles className="mr-2 h-6 w-6 text-primary" />
-          AI Interview Chat
+          AI Interview Chat (WebSocket)
         </CardTitle>
         <CardDescription>
          {getCardDescription()}
         </CardDescription>
-         {hasMicPermission === false && sttAvailable && (
-            <Alert variant="destructive" className="mt-2">
+        {apiError && (
+             <Alert variant="destructive" className="mt-2">
                 <AlertTriangle className="h-4 w-4" />
-                <AlertTitle>Microphone Access Denied</AlertTitle>
-                <AlertDescription>
-                Voice chat is disabled. Please enable microphone permissions in your browser settings to use ElevenLabs. You can still type your responses.
-                </AlertDescription>
+                <AlertTitle>Error</AlertTitle>
+                <AlertDescription>{apiError}</AlertDescription>
             </Alert>
         )}
-        {!sttAvailable && ( 
-             <Alert variant="warning" className="mt-2">
-                <AlertTriangle className="h-4 w-4" />
-                <AlertTitle>ElevenLabs API Unavailable</AlertTitle>
-                <AlertDescription>
-                `NEXT_PUBLIC_ELEVENLABS_API_KEY` is not set or is empty in your environment. ElevenLabs Voice Chat will not be available.
-                Please configure the API key in your `.env` file and **restart your development server**. You can use text input.
-                </AlertDescription>
-            </Alert>
+        {!isConnected && !isConnecting && elevenLabsApiKey && (
+          <Button onClick={connectWebSocket} variant="outline" className="mt-2">
+            <Zap className="mr-2 h-4 w-4" /> Reconnect
+          </Button>
         )}
       </CardHeader>
       <CardContent className="flex-grow overflow-hidden p-0">
         <ScrollArea className="h-full p-4 sm:p-6" ref={scrollAreaRef}>
           <div className="space-y-4">
-            {chatHistory.map((chat) => (
+            {chatHistory.map((chatMsg) => (
               <div
-                key={chat.id}
+                key={chatMsg.id}
                 className={cn(
                   "flex items-start space-x-3",
-                  chat.role === 'user' ? 'justify-end' : ''
+                  chatMsg.role === 'user' ? 'justify-end' : ''
                 )}
               >
-                {chat.role === 'assistant' && (
+                {chatMsg.role === 'assistant' && (
                   <span className="flex-shrink-0 inline-flex items-center justify-center h-8 w-8 rounded-full bg-primary text-primary-foreground">
                     <Bot size={18} />
+                  </span>
+                )}
+                 {chatMsg.role === 'system' && (
+                  <span className="flex-shrink-0 inline-flex items-center justify-center h-8 w-8 rounded-full bg-muted text-muted-foreground">
+                    <WifiOff size={18} />
                   </span>
                 )}
                 <div
                   className={cn(
                     "p-3 rounded-lg max-w-[75%]",
-                    chat.role === 'user'
+                    chatMsg.role === 'user'
                       ? 'bg-secondary text-secondary-foreground rounded-br-none'
-                      : 'bg-muted text-muted-foreground rounded-bl-none'
+                      : chatMsg.role === 'assistant' 
+                        ? 'bg-muted text-muted-foreground rounded-bl-none'
+                        : 'bg-transparent text-muted-foreground text-xs italic text-center w-full'
                   )}
                 >
-                  <p className="text-sm whitespace-pre-wrap">{chat.content}</p>
-                  <p className="text-xs text-muted-foreground/70 mt-1 text-right">
-                    {chat.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                  </p>
+                  <p className="text-sm whitespace-pre-wrap">{chatMsg.content || (chatMsg.role === 'assistant' ? '...' : '')}</p>
+                   {chatMsg.role !== 'system' && (
+                    <p className="text-xs text-muted-foreground/70 mt-1 text-right">
+                        {chatMsg.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </p>
+                   )}
                 </div>
-                 {chat.role === 'user' && (
+                 {chatMsg.role === 'user' && (
                   <span className="flex-shrink-0 inline-flex items-center justify-center h-8 w-8 rounded-full bg-muted text-muted-foreground">
                     <User size={18} />
                   </span>
                 )}
               </div>
             ))}
-             {isSendingMessage && chatHistory.length > 0 && chatHistory[chatHistory.length-1].role === 'user' && (
-                <div className="flex items-start space-x-3">
-                    <span className="flex-shrink-0 inline-flex items-center justify-center h-8 w-8 rounded-full bg-primary text-primary-foreground">
-                        <Bot size={18} />
-                    </span>
-                    <div className="p-3 rounded-lg bg-muted text-muted-foreground rounded-bl-none animate-pulse">
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                    </div>
+             {isConnecting && (
+                <div className="flex items-center justify-center space-x-2 mt-4">
+                    <Loader2 className="h-5 w-5 animate-spin text-primary" />
+                    <p className="text-muted-foreground">Connecting...</p>
                 </div>
             )}
           </div>
@@ -496,9 +443,9 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
           <Button
             variant="outline"
             size="icon"
-            disabled={disabled || isSendingMessage || !sttAvailable || hasMicPermission === false || hasMicPermission === null}
+            disabled={disabled || !isConnected || isConnecting || !!currentPlayingAudioId}
             onClick={handleMicClick}
-            aria-label={isRecording ? "Stop ElevenLabs Voice Chat" : "Start ElevenLabs Voice Chat"}
+            aria-label={isRecording ? "Stop Voice Chat" : "Start Voice Chat"}
             className="self-end mb-[1px]"
           >
             {isRecording ? <StopCircle className="h-5 w-5 text-destructive" /> : <Mic className="h-5 w-5" />}
@@ -506,7 +453,7 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
           <Button
             variant="outline"
             size="icon"
-            disabled={disabled || isSendingMessage || isRecording} 
+            disabled={disabled || !isConnected || isConnecting || isRecording || !!currentPlayingAudioId}
             onClick={handleToggleTextInput}
             aria-label={showTextInput ? "Switch to voice input" : "Switch to text input"}
             className="self-end mb-[1px]"
@@ -514,15 +461,15 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
             <Keyboard className="h-5 w-5" />
           </Button>
 
-          {showTextInput && (
+          {showTextInput ? (
             <>
               <Textarea
                 ref={textareaRef}
                 id="interview-message"
-                placeholder={getTextareaPlaceholder()}
-                value={currentMessage}
-                onChange={(e) => setCurrentMessage(e.target.value)}
-                disabled={disabled || isSendingMessage || isRecording}
+                placeholder={!isConnected ? "Connect to type..." : "Type your message here..."}
+                value={textInput}
+                onChange={(e) => setTextInput(e.target.value)}
+                disabled={disabled || !isConnected || isConnecting || isRecording || !!currentPlayingAudioId}
                 className="text-base flex-grow resize-none min-h-[40px] max-h-[150px] overflow-y-auto whitespace-pre-wrap"
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && !e.shiftKey) {
@@ -533,37 +480,33 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
               />
               <Button
                 onClick={handleSendText}
-                disabled={!currentMessage.trim() || disabled || isSendingMessage || isRecording}
+                disabled={!textInput.trim() || disabled || !isConnected || isConnecting || isRecording || !!currentPlayingAudioId}
                 size="icon"
                 aria-label="Send message"
                 className="self-end mb-[1px]"
               >
-                {isSendingMessage && !isRecording ? ( 
+                {isConnecting ? (
                   <Loader2 className="h-5 w-5 animate-spin" />
                 ) : (
                   <Send className="h-5 w-5" />
                 )}
               </Button>
             </>
-          )}
-           {!showTextInput && ( 
+          ) : (
              <div className={cn(
-                "flex-grow p-2 border rounded-md bg-muted text-muted-foreground text-sm min-h-[40px] max-h-[150px] overflow-y-auto self-end mb-[1px] whitespace-pre-wrap",
-                (currentMessage.startsWith("Listening") || currentMessage.startsWith("Connecting")) ? "italic" : ""
+                "flex-grow p-2 border rounded-md bg-muted/50 text-muted-foreground text-sm min-h-[40px] max-h-[150px] overflow-y-auto self-end mb-[1px] whitespace-pre-wrap flex items-center justify-center",
+                (isRecording || !!currentPlayingAudioId) ? "italic" : ""
              )}>
-                {currentMessage || getTextareaPlaceholder()}
+                {isRecording ? "Listening..." : (!!currentPlayingAudioId ? "AI Speaking..." : (isConnected ? "Mic muted. Click mic or keyboard." : "Connect to use mic."))}
              </div>
             )
            }
         </div>
         <Button
-          onClick={() => {
-            if(isRecording) stopRecordingInternal(); 
-            onFinishInterview();
-          }}
-          disabled={disabled || isSendingMessage} 
+          onClick={handleFinish}
+          disabled={disabled || isConnecting}
           variant="default"
-          className={`ml-4 self-end mb-[1px] ${!showTextInput && !currentMessage ? 'flex-grow sm:flex-grow-0' : ''}`}
+          className={`ml-4 self-end mb-[1px] ${!showTextInput ? 'flex-grow sm:flex-grow-0' : ''}`}
         >
           Finish Interview <ChevronRight className="ml-1 h-4 w-4"/>
         </Button>
@@ -573,4 +516,3 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
 });
 
 InterviewInput.displayName = "InterviewInput";
-    
