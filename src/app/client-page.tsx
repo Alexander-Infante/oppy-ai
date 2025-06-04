@@ -5,9 +5,8 @@ import type { ParseResumeInput, ParseResumeOutput } from '@/ai/flows/parse-resum
 import { parseResume } from '@/ai/flows/parse-resume';
 import type { RewriteResumeInput, RewriteResumeOutput } from '@/ai/flows/rewrite-resume';
 import { rewriteResume } from '@/ai/flows/rewrite-resume';
-// Types from conduct-interview-flow are no longer directly needed here if InterviewInput manages its own flow.
-// We will use UIChatMessage from InterviewInput for chat history.
-import { InterviewInput, type UIChatMessage, type InterviewInputHandle } from '@/components/interview-input';
+import { InterviewInput, type InterviewInputHandle } from '@/components/interview-input';
+import type { ChatMessage as SDKChatMessage } from '@elevenlabs/react'; 
 import { ResumeUploader } from '@/components/resume-uploader';
 import { ResumeEditor } from '@/components/resume-editor';
 import { Button } from '@/components/ui/button';
@@ -19,29 +18,23 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 
 type Step = 'upload' | 'parse' | 'interview' | 'rewrite' | 'review';
 
-// ELEVENLABS_VOICE_ID is not needed here if WebSocket agent handles voice.
-// The speakText function might be simplified or removed if not used elsewhere.
-
-export default function ResumeBoostClientPage() {
+export default function OppyAIClientPage() {
   const [currentStep, setCurrentStep] = useState<Step>('upload');
   const [resumeFile, setResumeFile] = useState<File | null>(null);
   const [resumeTextContent, setResumeTextContent] = useState<string>('');
   const [resumeDataUri, setResumeDataUri] = useState<string>('');
   
   const [parsedData, setParsedData] = useState<ParseResumeOutput | null>(null);
-  // chatHistory from client-page is no longer the source of truth during the interview.
-  // InterviewInput will manage its own history and provide it upon completion.
-  const [finalInterviewChatHistory, setFinalInterviewChatHistory] = useState<UIChatMessage[]>([]);
+  const [finalInterviewChatHistory, setFinalInterviewChatHistory] = useState<SDKChatMessage[]>([]); 
   const [rewrittenResume, setRewrittenResume] = useState<RewriteResumeOutput | null>(null);
   
   const [isLoading, setIsLoading] = useState<boolean>(false);
-  // isSendingMessage might be managed within InterviewInput for WebSocket.
   const [loadingMessage, setLoadingMessage] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
 
   const { toast } = useToast();
   const [progress, setProgress] = useState(0);
-  const interviewInputRef = useRef<InterviewInputHandle | null>(null); // May not be needed as much
+  const interviewInputRef = useRef<InterviewInputHandle | null>(null);
   const isMountedRef = useRef(false);
 
   useEffect(() => {
@@ -50,29 +43,6 @@ export default function ResumeBoostClientPage() {
       isMountedRef.current = false;
     };
   }, []);
-
-  // speakText might be used for generic TTS outside the interview, keeping it for now.
-  const speakText = useCallback((text: string): Promise<void> => {
-    // This function remains for potential other uses, but InterviewInput will handle its own audio.
-    // (Original speakText implementation is kept but not directly called by interview flow)
-    return new Promise((resolve, reject) => {
-      // Fallback or simplified TTS logic if needed elsewhere
-      if ('speechSynthesis' in window) {
-        window.speechSynthesis.cancel(); // Cancel any ongoing speech
-        const utterance = new SpeechSynthesisUtterance(text);
-        utterance.onend = () => resolve();
-        utterance.onerror = (event) => {
-            console.warn("Browser SpeechSynthesis error:", event.error);
-            reject(new Error(`Browser TTS error: ${event.error}`));
-        };
-        window.speechSynthesis.speak(utterance);
-      } else {
-        console.warn("Browser does not support speech synthesis. No audio will be played by speakText.");
-        resolve(); // Resolve if TTS not critical for this specific call
-      }
-    });
-  }, []); // Removed toast dependency if not used within
-
 
   useEffect(() => {
     let timer: NodeJS.Timeout;
@@ -122,21 +92,16 @@ export default function ResumeBoostClientPage() {
     }
   };
   
-  // The old handleSendMessageToInterviewAI and related useEffect for initial AI message are removed.
-  // InterviewInput now manages its own WebSocket communication lifecycle.
-
-  const handleFinishInterview = (interviewChatHistory: UIChatMessage[]) => {
-    // This function is called by InterviewInput when the user finishes.
-    // It receives the complete chat history from the WebSocket interaction.
+  const handleFinishInterview = (interviewChatHistory: SDKChatMessage[]) => {
     if (!isMountedRef.current) return;
 
-    setFinalInterviewChatHistory(interviewChatHistory); // Store the history
+    setFinalInterviewChatHistory(interviewChatHistory); 
     setCurrentStep('rewrite');
     
     const interviewInsights = interviewChatHistory
-      .filter(msg => msg.role === 'user' || msg.role === 'assistant') // Filter out system messages
-      .map(msg => `${msg.role === 'user' ? 'User' : 'AI'}: ${msg.content}`)
-      .join('\n\n'); // Use double newline for better separation if needed by the rewrite prompt
+      .filter(msg => msg.role === 'user' || msg.role === 'assistant') 
+      .map(msg => `${msg.role === 'user' ? 'User' : 'AI'}: ${msg.text}`) 
+      .join('\n\n'); 
       
     handleRewriteResume(interviewInsights);
   };
@@ -175,13 +140,8 @@ export default function ResumeBoostClientPage() {
   };
   
   const handleStartOver = () => {
-    // Stop any ongoing WebSocket connection or recording in InterviewInput if needed,
-    // though InterviewInput's own cleanup on unmount or finish should handle it.
     if (isMountedRef.current) {
-        // If speakText was using window.speechSynthesis, cancel it.
-        if ('speechSynthesis' in window) {
-            window.speechSynthesis.cancel();
-        }
+      // SDK in InterviewInput should handle its own cleanup
     }
 
     setCurrentStep('upload');
@@ -197,7 +157,7 @@ export default function ResumeBoostClientPage() {
   };
 
   const renderStepContent = () => {
-    if (isLoading) {
+    if (isLoading && (currentStep === 'parse' || currentStep === 'rewrite' || (currentStep === 'interview' && !parsedData))) { 
       return (
         <Card className="w-full max-w-lg shadow-lg">
           <CardHeader>
@@ -215,7 +175,7 @@ export default function ResumeBoostClientPage() {
       );
     }
 
-    if (error) { // Simplified error display, InterviewInput shows its own errors during chat
+    if (error && currentStep !== 'interview') { 
       return (
          <Card className="w-full max-w-lg shadow-lg">
           <CardHeader>
@@ -242,12 +202,11 @@ export default function ResumeBoostClientPage() {
         return (
           <div className="w-full max-w-3xl space-y-6">
             <InterviewInput
-              ref={interviewInputRef} // ref might be less critical now
+              ref={interviewInputRef}
               parsedData={parsedData}
               onFinishInterview={handleFinishInterview}
               disabled={isLoading} 
             />
-            {/* Error display specific to this step can be added if needed, but InterviewInput handles its own API errors */}
           </div>
         );
       case 'rewrite': 
@@ -276,13 +235,15 @@ export default function ResumeBoostClientPage() {
   
   const stepIcons: Record<Step, React.ElementType> = {
     upload: Rocket,
-    parse: Loader2,
+    parse: Loader2, 
     interview: MessageSquare,
-    rewrite: Loader2,
+    rewrite: Loader2, 
     review: Rocket,
   };
 
   const CurrentStepIcon = stepIcons[currentStep] || Rocket;
+  const showStepTitleCard = !isLoading || (currentStep === 'interview' && parsedData);
+
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-center p-4 sm:p-6 md:p-8 bg-gradient-to-br from-background to-muted/30">
@@ -297,11 +258,11 @@ export default function ResumeBoostClientPage() {
       </header>
 
       <main className="w-full flex flex-col items-center">
-        {!isLoading && (currentStep !== 'interview' || !parsedData) && (
+        {showStepTitleCard && (currentStep !== 'interview' || !parsedData || error ) && (
             <Card className="w-full max-w-md mb-6 shadow-md">
                 <CardHeader>
                     <CardTitle className="text-xl text-center flex items-center justify-center">
-                        <CurrentStepIcon className={`mr-2 h-6 w-6 ${isLoading || currentStep === 'parse' || currentStep === 'rewrite' ? 'animate-spin' : ''}`} />
+                        <CurrentStepIcon className={`mr-2 h-6 w-6 ${(isLoading && (currentStep === 'parse' || currentStep === 'rewrite')) ? 'animate-spin' : ''}`} />
                         {stepTitles[currentStep]}
                     </CardTitle>
                 </CardHeader>
@@ -317,3 +278,4 @@ export default function ResumeBoostClientPage() {
     </div>
   );
 }
+
