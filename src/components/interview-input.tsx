@@ -26,25 +26,25 @@ export interface InterviewInputHandle {
 }
 
 interface InterviewInputProps {
-  parsedData: ParseResumeOutput; 
+  parsedData: ParseResumeOutput;
   chatHistory: UIChatMessage[];
   onSendMessage: (message: string) => Promise<void>;
   onTranscriptionComplete?: (transcript: string) => void;
   onFinishInterview: () => void;
-  disabled?: boolean; 
-  isSendingMessage: boolean; 
+  disabled?: boolean;
+  isSendingMessage: boolean;
 }
 
-const ELEVENLABS_STT_MODEL_ID = "eleven_multilingual_v2"; // Or "eleven_english_sts_v2"
+const ELEVENLABS_STT_MODEL_ID = "eleven_multilingual_v2";
 const ELEVENLABS_STT_TIMEOUT_MS = 4000; // 4 seconds
 
-export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputProps>(({ 
-  chatHistory, 
-  onSendMessage, 
+export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputProps>(({
+  chatHistory,
+  onSendMessage,
   onTranscriptionComplete,
-  onFinishInterview, 
+  onFinishInterview,
   disabled,
-  isSendingMessage 
+  isSendingMessage
 }, ref) => {
   const [currentMessage, setCurrentMessage] = useState('');
   const scrollAreaRef = useRef<HTMLDivElement>(null);
@@ -52,10 +52,10 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
   const { toast } = useToast();
 
   const [isRecording, setIsRecording] = useState(false);
-  const [showTextInput, setShowTextInput] = useState(false); // Default to voice-focused
+  const [showTextInput, setShowTextInput] = useState(false);
   const [hasMicPermission, setHasMicPermission] = useState<boolean | null>(null);
-  const isMountedRef = useRef(false); 
-  
+  const isMountedRef = useRef(false);
+
   const elevenLabsApiKey = process.env.NEXT_PUBLIC_ELEVENLABS_API_KEY;
   const [sttAvailable, setSttAvailable] = useState(false);
 
@@ -72,7 +72,7 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
       setSttAvailable(true);
     } else {
       setSttAvailable(false);
-      console.warn("ElevenLabs API Key (NEXT_PUBLIC_ELEVENLABS_API_KEY) is missing. ElevenLabs STT will be unavailable.");
+      console.warn("ElevenLabs API Key (NEXT_PUBLIC_ELEVENLABS_API_KEY) is missing or empty. ElevenLabs STT will be unavailable. Ensure the key is set in your .env file and RESTART your development server if changes were made.");
     }
     return () => {
       isMountedRef.current = false;
@@ -90,7 +90,7 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
 
   useEffect(() => {
     if (textareaRef.current && showTextInput) {
-      textareaRef.current.style.height = 'auto'; 
+      textareaRef.current.style.height = 'auto';
       const scrollHeight = textareaRef.current.scrollHeight;
       textareaRef.current.style.height = `${scrollHeight}px`;
     }
@@ -101,12 +101,12 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
       clearTimeout(inactivityTimerRef.current);
     }
     inactivityTimerRef.current = setTimeout(() => {
-      if (isRecording) { 
+      if (isRecording) {
         console.info("ElevenLabs STT: Inactivity timeout reached. Stopping recording.");
-        stopRecordingInternal(false, true); 
+        stopRecordingInternal(false, true);
       }
     }, ELEVENLABS_STT_TIMEOUT_MS);
-  }, [isRecording]); 
+  }, [isRecording]); // Add stopRecordingInternal to dependencies if it uses state/props that change
 
   const stopRecordingInternal = useCallback((calledByToggleMode = false, dueToTimeout = false) => {
     if (inactivityTimerRef.current) {
@@ -115,33 +115,35 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
     }
 
     if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
-      mediaRecorderRef.current.stop(); 
+      mediaRecorderRef.current.stop(); // This will trigger onstop, which sends EOS
     } else if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      console.log("ElevenLabs STT: Sending EOS (MediaRecorder already stopped or not started but WS open)");
-      wsRef.current.send(JSON.stringify({})); 
+      // If MediaRecorder already stopped or wasn't started but WS is open, send EOS
+      console.log("ElevenLabs STT: Sending EOS (MediaRecorder likely already stopped or not started but WS open)");
+      wsRef.current.send(JSON.stringify({})); // EOS signal
     }
-
+    // Note: wsRef.current.close() is usually handled in socket.onclose or after EOS confirmation from server if needed.
+    // Forcing close here might be too abrupt if server expects EOS then closes.
 
     if (calledByToggleMode && !isRecording && isMountedRef.current) {
-      setIsRecording(false); 
+      setIsRecording(false); // Ensure state consistency if called by mode toggle
     }
-    
+    // Let onclose handle setIsRecording(false) in other scenarios
   }, [isRecording, onTranscriptionComplete, currentMessage]);
 
 
   const startRecording = useCallback(async () => {
     if (!isMountedRef.current || !sttAvailable || !hasMicPermission) {
       if (!sttAvailable) {
-        toast({ variant: 'destructive', title: 'ElevenLabs STT Unavailable', description: 'API key missing. Cannot start voice input.' });
+        toast({ variant: 'destructive', title: 'ElevenLabs STT Unavailable', description: 'API key missing. Cannot start voice input. Ensure NEXT_PUBLIC_ELEVENLABS_API_KEY is set and restart your server.' });
       } else if (hasMicPermission === false) {
         toast({ variant: 'destructive', title: 'Microphone Permission Denied' });
       }
       return;
     }
-    if (isRecording) return; 
+    if (isRecording) return;
 
     if (isMountedRef.current) {
-      setShowTextInput(false); 
+      setShowTextInput(false);
       setIsRecording(true);
       setCurrentMessage('Connecting to ElevenLabs STT...');
       finalTranscriptFromElevenLabs.current = '';
@@ -158,33 +160,36 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
       socket.onopen = () => {
         if (!isMountedRef.current) { socket.close(); return; }
         console.log("ElevenLabs STT: WebSocket Connected");
-        socket.send(JSON.stringify({
+        const sttConfig = {
           xi_api_key: elevenLabsApiKey,
           model_id: ELEVENLABS_STT_MODEL_ID,
-        }));
-        
+        };
+        console.log("ElevenLabs STT: Sending configuration:", sttConfig);
+        socket.send(JSON.stringify(sttConfig));
+
         if(isMountedRef.current) setCurrentMessage('Listening via ElevenLabs...');
         toast({ title: "Listening (ElevenLabs STT)", description: `Speak now. Stops after ${ELEVENLABS_STT_TIMEOUT_MS / 1000}s of silence or manual stop.` });
 
-        mediaRecorderRef.current = new MediaRecorder(stream, { mimeType: 'audio/webm' }); 
-        
+        mediaRecorderRef.current = new MediaRecorder(stream, { mimeType: 'audio/webm' }); // Consider checking MediaRecorder.isTypeSupported('audio/webm')
+
         mediaRecorderRef.current.ondataavailable = (event) => {
           if (event.data.size > 0 && socket.readyState === WebSocket.OPEN) {
             socket.send(event.data);
             audioChunksRef.current.push(event.data);
-            resetInactivityTimer(); 
+            resetInactivityTimer();
           }
         };
 
         mediaRecorderRef.current.onstop = () => {
+          // This is called when mediaRecorder.stop() is invoked
           if (isMountedRef.current && socket.readyState === WebSocket.OPEN) {
             console.log("ElevenLabs STT: MediaRecorder stopped. Sending EOS.");
-            socket.send(JSON.stringify({})); 
+            socket.send(JSON.stringify({})); // End of Stream signal
           }
-          stream.getTracks().forEach(track => track.stop()); 
+          stream.getTracks().forEach(track => track.stop()); // Stop mic access
         };
-        
-        mediaRecorderRef.current.start(500); 
+
+        mediaRecorderRef.current.start(500); // Send data every 500ms
         resetInactivityTimer();
       };
 
@@ -200,23 +205,25 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
           } else if (data.type === "final_transcript" && data.transcript) {
              finalTranscriptFromElevenLabs.current += data.transcript;
              if(isMountedRef.current) setCurrentMessage(finalTranscriptFromElevenLabs.current);
-             
-             if (inactivityTimerRef.current) clearTimeout(inactivityTimerRef.current);
-          } else if (data.is_final === true) { 
-            const fullTranscript = data.transcript || finalTranscriptFromElevenLabs.current; 
+             // Don't auto-stop/send here, wait for is_final or timeout
+             if (inactivityTimerRef.current) clearTimeout(inactivityTimerRef.current); // A final transcript arrived, clear timer
+          } else if (data.is_final === true) { // This usually marks the end from server after EOS
+            const fullTranscript = data.transcript || finalTranscriptFromElevenLabs.current;
              if (isMountedRef.current) {
-                setCurrentMessage(fullTranscript);
+                setCurrentMessage(fullTranscript); // Display final
                 if (onTranscriptionComplete && fullTranscript.trim()) {
                     onTranscriptionComplete(fullTranscript.trim());
                 }
-                setCurrentMessage(''); 
+                setCurrentMessage(''); // Clear for next input
              }
              if (inactivityTimerRef.current) clearTimeout(inactivityTimerRef.current);
+             // Consider closing WS here if server doesn't auto-close after final message
+             // wsRef.current?.close();
           } else if (data.error) {
             console.error("ElevenLabs STT Error from WebSocket:", data.error);
             toast({ variant: "destructive", title: "ElevenLabs STT Error", description: data.error });
             if (isMountedRef.current) setCurrentMessage(`Error: ${data.error}`);
-            stopRecordingInternal(false);
+            stopRecordingInternal(false); // Stop recording on error
           }
         } catch (e) {
           console.error("ElevenLabs STT: Error parsing WebSocket message", e);
@@ -233,7 +240,7 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
             `ElevenLabs STT: WebSocket onerror event. Type: ${eventType}, Bubbles: ${bubbles}, Cancelable: ${cancelable}. Inspect the full event object logged below for more details. Also check the WebSocket 'onclose' event (code/reason) and your browser's network tab for handshake issues.`,
             errorEvent
         );
-        
+
         toast({ variant: 'destructive', title: 'ElevenLabs STT Connection Error', description: 'Could not connect for voice input.' });
         if(isMountedRef.current) setCurrentMessage('Connection error.');
         if (isMountedRef.current) setIsRecording(false);
@@ -242,17 +249,22 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
 
       socket.onclose = (event) => {
         if (!isMountedRef.current) return;
-        console.log("ElevenLabs STT: WebSocket Closed", event.code, event.reason);
-        if (onTranscriptionComplete && finalTranscriptFromElevenLabs.current.trim() && !event.reason?.includes("Processed transcript")) {
-            // Consider if this heuristic is still needed or if `is_final: true` is reliable enough
+        console.log("ElevenLabs STT: WebSocket Closed. Code:", event.code, "Reason:", event.reason || "No reason provided.");
+        // If closed unexpectedly, and there's a pending transcript, try to use it
+        if (event.code !== 1000 && finalTranscriptFromElevenLabs.current.trim() && onTranscriptionComplete) {
+             if (isMountedRef.current && (currentMessage.startsWith("Listening") || currentMessage.startsWith("Connecting") || currentMessage === finalTranscriptFromElevenLabs.current) ) {
+                // Heuristic: If current message IS the final transcript, it was likely a timeout or unexpected close
+                // and we should send what we have.
+                onTranscriptionComplete(finalTranscriptFromElevenLabs.current.trim());
+             }
         }
         if(isMountedRef.current) {
             setIsRecording(false);
             if (currentMessage.startsWith("Listening") || currentMessage.startsWith("Connecting")) {
-                 setCurrentMessage(''); 
+                 setCurrentMessage(''); // Clear "Listening..."
             }
         }
-        stream.getTracks().forEach(track => track.stop()); 
+        stream.getTracks().forEach(track => track.stop()); // Ensure mic is off
       };
 
     } catch (error) {
@@ -263,7 +275,7 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
         setCurrentMessage('');
       }
     }
-  }, [sttAvailable, elevenLabsApiKey, toast, onTranscriptionComplete, hasMicPermission, isRecording, resetInactivityTimer, stopRecordingInternal, currentMessage]);
+  }, [sttAvailable, elevenLabsApiKey, toast, onTranscriptionComplete, hasMicPermission, isRecording, resetInactivityTimer, stopRecordingInternal, currentMessage]); // Added dependencies
 
 
   useImperativeHandle(ref, () => ({
@@ -271,20 +283,21 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
         if (sttAvailable && hasMicPermission) {
             startRecording();
         } else if (!sttAvailable) {
-             toast({ variant: 'destructive', title: 'ElevenLabs STT Unavailable', description: 'API key missing. Cannot start voice input automatically.' });
+             toast({ variant: 'destructive', title: 'ElevenLabs STT Unavailable', description: 'API key missing. Cannot start voice input automatically. Ensure NEXT_PUBLIC_ELEVENLABS_API_KEY is set and restart your server.' });
         } else if (hasMicPermission === false) {
              toast({ variant: 'destructive', title: 'Microphone Permission Denied', description: 'Cannot start voice input automatically.' });
         }
     },
-    stopRecording: () => stopRecordingInternal(false), 
+    stopRecording: () => stopRecordingInternal(false), // Expose internal stop
   }));
 
   useEffect(() => {
     const getMicPermission = async () => {
       try {
+        // Just to check permission, then stop the track immediately.
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
         if (isMountedRef.current) setHasMicPermission(true);
-        stream.getTracks().forEach(track => track.stop()); 
+        stream.getTracks().forEach(track => track.stop()); // Important to release the mic
       } catch (error) {
         console.error('Error accessing microphone:', error);
         if (isMountedRef.current) {
@@ -298,29 +311,29 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
       }
     };
 
-    if (hasMicPermission === null) { 
+    if (hasMicPermission === null) { // Only check if permission status is unknown
         getMicPermission();
     }
-    
+    // No cleanup needed here as tracks are stopped immediately after permission check
   }, [toast, hasMicPermission]);
 
 
   const handleMicClick = () => {
     if (!sttAvailable) {
-      toast({ variant: 'destructive', title: 'ElevenLabs STT Unavailable', description: 'API key missing. Cannot use voice input.' });
+      toast({ variant: 'destructive', title: 'ElevenLabs STT Unavailable', description: 'API key missing. Cannot use voice input. Ensure NEXT_PUBLIC_ELEVENLABS_API_KEY is set and restart your server.' });
       return;
     }
     if (hasMicPermission === false) {
         toast({ variant: 'destructive', title: 'Microphone Permission Denied', description: 'Please enable microphone permissions.' });
         return;
     }
-     if (hasMicPermission === null) { 
+     if (hasMicPermission === null) { // If still null, try to get it now
         (async () => {
             try {
                 const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
                 if (isMountedRef.current) setHasMicPermission(true);
                 stream.getTracks().forEach(track => track.stop());
-                if (isMountedRef.current) handleMicClick(); 
+                if (isMountedRef.current) handleMicClick(); // Retry click after permission granted
             } catch (error) {
                 if (isMountedRef.current) setHasMicPermission(false);
                  toast({ variant: 'destructive', title: 'Microphone Access Denied'});
@@ -332,8 +345,8 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
     if (isRecording) {
       stopRecordingInternal();
     } else {
-      if (isMountedRef.current && showTextInput) setShowTextInput(false); 
-      startRecording(); 
+      if (isMountedRef.current && showTextInput) setShowTextInput(false); // Switch to voice UI
+      startRecording(); // Now start the actual recording
     }
   };
 
@@ -341,19 +354,20 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
     if (isMountedRef.current) {
         const newShowTextInputState = !showTextInput;
         setShowTextInput(newShowTextInputState);
-        if (isRecording && newShowTextInputState) { 
-            stopRecordingInternal(true); 
+        if (isRecording && newShowTextInputState) { // If switching to text while recording
+            stopRecordingInternal(true); // Stop recording, indicating it's due to mode toggle
         }
     }
   };
 
-  const handleSendText = async () => { 
+  const handleSendText = async () => { // For manual text input
     if (!currentMessage.trim() || disabled || isSendingMessage || isRecording || !showTextInput) return;
-    
-    await onSendMessage(currentMessage.trim()); 
+
+    await onSendMessage(currentMessage.trim()); // Use the existing onSendMessage prop
     if (isMountedRef.current) setCurrentMessage('');
   };
 
+  // Scroll to bottom of chat history
   useEffect(() => {
     if (scrollAreaRef.current) {
       const scrollableViewport = scrollAreaRef.current.querySelector('div[data-radix-scroll-area-viewport]');
@@ -389,7 +403,7 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
         <CardDescription>
          {getCardDescription()}
         </CardDescription>
-         {hasMicPermission === false && sttAvailable && ( 
+         {hasMicPermission === false && sttAvailable && ( // Show if mic denied but STT could be available
             <Alert variant="destructive" className="mt-2">
                 <AlertTriangle className="h-4 w-4" />
                 <AlertTitle>Microphone Access Denied</AlertTitle>
@@ -398,12 +412,13 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
                 </AlertDescription>
             </Alert>
         )}
-        {!sttAvailable && (
-             <Alert variant="warning" className="mt-2"> 
+        {!sttAvailable && ( // Show if API key is missing
+             <Alert variant="warning" className="mt-2">
                 <AlertTriangle className="h-4 w-4" />
                 <AlertTitle>ElevenLabs STT Unavailable</AlertTitle>
                 <AlertDescription>
-                `NEXT_PUBLIC_ELEVENLABS_API_KEY` is not set in your environment. Voice input will not use ElevenLabs. Please configure the API key and restart your server. You can use text input.
+                `NEXT_PUBLIC_ELEVENLABS_API_KEY` is not set or is empty in your environment. Voice input will not use ElevenLabs.
+                Please configure the API key in your `.env` file and **restart your development server**. You can use text input.
                 </AlertDescription>
             </Alert>
         )}
@@ -459,20 +474,20 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
       </CardContent>
       <CardFooter className="p-4 sm:p-6 border-t">
         <div className="flex w-full items-end space-x-2">
-          <Button 
-            variant="outline" 
-            size="icon" 
-            disabled={disabled || isSendingMessage || !sttAvailable || hasMicPermission === false || hasMicPermission === null} 
+          <Button
+            variant="outline"
+            size="icon"
+            disabled={disabled || isSendingMessage || !sttAvailable || hasMicPermission === false || hasMicPermission === null} // Disable if mic perm unknown
             onClick={handleMicClick}
             aria-label={isRecording ? "Stop ElevenLabs STT recording" : "Start ElevenLabs STT voice input"}
             className="self-end mb-[1px]"
           >
             {isRecording ? <StopCircle className="h-5 w-5 text-destructive" /> : <Mic className="h-5 w-5" />}
           </Button>
-          <Button 
-            variant="outline" 
-            size="icon" 
-            disabled={disabled || isSendingMessage || isRecording} 
+          <Button
+            variant="outline"
+            size="icon"
+            disabled={disabled || isSendingMessage || isRecording} // Disable if recording
             onClick={handleToggleTextInput}
             aria-label={showTextInput ? "Switch to voice input" : "Switch to text input"}
             className="self-end mb-[1px]"
@@ -488,7 +503,7 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
                 placeholder={getTextareaPlaceholder()}
                 value={currentMessage}
                 onChange={(e) => setCurrentMessage(e.target.value)}
-                disabled={disabled || isSendingMessage || isRecording} 
+                disabled={disabled || isSendingMessage || isRecording} // Also disable if recording
                 className="text-base flex-grow resize-none min-h-[40px] max-h-[150px] overflow-y-auto"
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && !e.shiftKey) {
@@ -497,14 +512,14 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
                   }
                 }}
               />
-              <Button 
-                onClick={handleSendText} 
+              <Button
+                onClick={handleSendText}
                 disabled={!currentMessage.trim() || disabled || isSendingMessage || isRecording}
                 size="icon"
                 aria-label="Send message"
                 className="self-end mb-[1px]"
               >
-                {isSendingMessage && !isRecording ? (
+                {isSendingMessage && !isRecording ? ( // Check not recording for loader on send button
                   <Loader2 className="h-5 w-5 animate-spin" />
                 ) : (
                   <Send className="h-5 w-5" />
@@ -512,7 +527,7 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
               </Button>
             </>
           )}
-           {!showTextInput && ( 
+           {!showTextInput && ( // Display area for voice transcript
              <div className={cn(
                 "flex-grow p-2 border rounded-md bg-muted text-muted-foreground text-sm min-h-[40px] max-h-[150px] overflow-y-auto self-end mb-[1px]",
                 (currentMessage.startsWith("Listening") || currentMessage.startsWith("Connecting")) ? "italic" : ""
@@ -522,14 +537,14 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
             )
            }
         </div>
-        <Button 
+        <Button
           onClick={() => {
-            if(isRecording) stopRecordingInternal(); 
+            if(isRecording) stopRecordingInternal(); // Ensure recording stops
             onFinishInterview();
-          }} 
-          disabled={disabled || isSendingMessage} 
+          }}
+          disabled={disabled || isSendingMessage} // Can finish even if recording (it will be stopped)
           variant="default"
-          className={`ml-4 self-end mb-[1px] ${!showTextInput && !currentMessage ? 'flex-grow sm:flex-grow-0' : ''}`} 
+          className={`ml-4 self-end mb-[1px] ${!showTextInput && !currentMessage ? 'flex-grow sm:flex-grow-0' : ''}`} // Adjust width if voice input is active and empty
         >
           Finish Interview <ChevronRight className="ml-1 h-4 w-4"/>
         </Button>
@@ -540,10 +555,3 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
 
 InterviewInput.displayName = "InterviewInput";
     
-
-    
-
-    
-
-    
-
