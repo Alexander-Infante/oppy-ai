@@ -81,25 +81,36 @@ export default function OppyAiClientPage() {
             },
           }),
         })
-        .then(response => {
+        .then(async response => {
           if (!response.ok) {
-            response.json().then(errorData => {
-              console.error("ElevenLabs API error:", errorData);
-              toast({
-                title: "ElevenLabs TTS Error",
-                description: `Failed to generate speech: ${errorData.detail?.message || response.statusText}. Check API key & credits. Restart dev server if .env changed.`,
-                variant: "destructive",
-              });
-              reject(new Error(errorData.detail?.message || `ElevenLabs API Error: ${response.statusText}`));
-            }).catch(() => {
-                reject(new Error(`ElevenLabs API Error: ${response.statusText} (Could not parse error response)`));
+            let errorDetail = `ElevenLabs API Error: ${response.statusText}`;
+            try {
+              const errorData = await response.json();
+              console.error("ElevenLabs API error (JSON):", errorData);
+              errorDetail = `Failed to generate speech: ${errorData.detail?.message || response.statusText}.`;
+            } catch (jsonError) {
+              // If parsing JSON fails, try to get text
+              console.warn("ElevenLabs API error response was not JSON. Attempting to read as text.");
+              try {
+                const errorText = await response.text();
+                console.error("ElevenLabs API error (Text):", errorText);
+                errorDetail = `Failed to generate speech: ${response.statusText} - ${errorText.substring(0, 100)}`;
+              } catch (textError) {
+                console.error("ElevenLabs API error: Could not parse error response as JSON or Text.");
+              }
+            }
+            toast({
+              title: "ElevenLabs TTS Error",
+              description: `${errorDetail} Check API key & credits. Restart dev server if .env changed.`,
+              variant: "destructive",
             });
-            return; // Don't proceed further in this .then block
+            reject(new Error(errorDetail));
+            return null; // Indicate that further processing should stop
           }
           return response.blob();
         })
         .then(audioBlob => {
-          if (!audioBlob) return; // Already handled error
+          if (!audioBlob) return; // Already handled error in previous .then
           const audioUrl = URL.createObjectURL(audioBlob);
           
           if (!audioPlayerRef.current) {
@@ -252,7 +263,7 @@ export default function OppyAiClientPage() {
       };
       fetchInitialAIMessage();
     }
-  }, [currentStep, parsedData, isLoading, /* Removed chatHistory.length to allow re-trigger if needed */ toast, /* speakText (now in startConversationCycle) */]);
+  }, [currentStep, parsedData, isLoading, toast, chatHistory.length /* re-added to prevent re-fetch on every history update */]);
 
 
   const handleSendMessageToInterviewAI = async (message: string) => {
