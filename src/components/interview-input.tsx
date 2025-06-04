@@ -223,10 +223,17 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
         }
       };
 
-      socket.onerror = (errorEvent) => { // Renamed 'error' to 'errorEvent' for clarity
+      socket.onerror = (errorEvent: Event) => {
         if (!isMountedRef.current) return;
-        // Log the event object itself, which might contain more inspectable details in the browser console
-        console.error("ElevenLabs STT: WebSocket onerror event:", errorEvent); 
+        const eventType = errorEvent.type || 'N/A';
+        const bubbles = errorEvent.bubbles;
+        const cancelable = errorEvent.cancelable;
+
+        console.error(
+            `ElevenLabs STT: WebSocket onerror event. Type: ${eventType}, Bubbles: ${bubbles}, Cancelable: ${cancelable}. Inspect the full event object logged below for more details. Also check the WebSocket 'onclose' event (code/reason) and your browser's network tab for handshake issues.`,
+            errorEvent
+        );
+        
         toast({ variant: 'destructive', title: 'ElevenLabs STT Connection Error', description: 'Could not connect for voice input.' });
         if(isMountedRef.current) setCurrentMessage('Connection error.');
         if (isMountedRef.current) setIsRecording(false);
@@ -539,3 +546,4 @@ InterviewInput.displayName = "InterviewInput";
     
 
     
+
