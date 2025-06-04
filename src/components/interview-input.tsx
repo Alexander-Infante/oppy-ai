@@ -61,11 +61,11 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
   const isMountedRef = useRef(false);
 
   const elevenLabsApiKey = process.env.NEXT_PUBLIC_ELEVENLABS_API_KEY;
-  const [sttAvailable, setSttAvailable] = useState(false); // Renaming to sttAvailable for consistency, though it's now for conversational API
+  const [sttAvailable, setSttAvailable] = useState(false); 
 
   const wsRef = useRef<WebSocket | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const audioChunksRef = useRef<Blob[]>([]); // May not be strictly needed if audio isn't replayed locally
+  const audioChunksRef = useRef<Blob[]>([]); 
   const inactivityTimerRef = useRef<NodeJS.Timeout | null>(null);
   const accumulatedTranscript = useRef<string>('');
 
@@ -120,20 +120,11 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
 
     if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
       mediaRecorderRef.current.stop(); 
-      // onstop for MediaRecorder will handle sending any final audio or EOS to WebSocket if API needs it
     }
     
-    // For Conversational API, sending a specific "end of user input" message might be needed.
-    // For now, we assume closing the audio stream (by stopping MediaRecorder) and then
-    // potentially closing the WebSocket or sending an EOS like message is sufficient.
-    // This might need to be adjusted based on API specifics.
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      // Example: Send a message indicating end of user turn if API requires it
-      // wsRef.current.send(JSON.stringify({ type: "user_input_end" }));
-      // For now, like STT, we try sending empty JSON as EOS or rely on stream end.
       console.log("ElevenLabs Conversational: MediaRecorder stopped or stopping. Sending EOS-like signal (empty JSON).");
-      wsRef.current.send(JSON.stringify({ "text": " " })); // Sending a space ensures it's not an empty message, some APIs prefer this over totally empty {}. This is a guess.
-                                                            // The API might also rely on just stopping the audio stream from client.
+      wsRef.current.send(JSON.stringify({ "text": " " })); 
     }
     
     if (calledByToggleMode && !isRecording && isMountedRef.current) {
@@ -175,20 +166,16 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
         if (!isMountedRef.current) { socket.close(); return; }
         console.log("ElevenLabs Conversational: WebSocket Connected");
         
-        // NOTE: The initial message format is an assumption based on typical conversational APIs.
-        // Please verify and adjust according to official ElevenLabs Conversational API documentation.
+        // IMPORTANT: Consult ElevenLabs official documentation for the correct Conversational API endpoint
+        // and the *exact* required structure for this initial configuration message.
+        // The fields 'voice_id', 'model_id', and any audio format specifications are critical.
         const initialConfig = {
-          xi_api_key: elevenLabsApiKey,
-          voice_id: AI_VOICE_ID_FOR_CONVERSATION, // For the AI's voice
-          model_id: CONVERSATIONAL_MODEL_ID, // Specifies the model for conversation/STT
-          // The API might expect audio format details here, or it might infer from the stream.
-          // For MediaRecorder with default settings (often Opus in WebM):
-          audio_format: { // This is a GUESS - API might not need it or use different keys
-             content_type: "audio/webm", // or "audio/opus"
-          },
+          xi_api_key: elevenLabsApiKey, // This MUST be your valid ElevenLabs API key.
+          voice_id: AI_VOICE_ID_FOR_CONVERSATION, // For the AI's voice, ensure this ID is valid.
+          model_id: CONVERSATIONAL_MODEL_ID, // Specifies the model for conversation/STT.
+          // audio_format was removed as a test - the API might not need it, or might need it specified differently.
           enable_automatic_punctuation: true,
           optimize_streaming_latency: 4, // 0-4, higher means more optimization
-          // Any other necessary fields like user_id, conversation_id, etc.
         };
         console.log("ElevenLabs Conversational: Sending initial configuration:", initialConfig);
         socket.send(JSON.stringify(initialConfig));
@@ -196,25 +183,23 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
         if(isMountedRef.current) setCurrentMessage('Listening (ElevenLabs Voice Chat)...');
         toast({ title: "Listening (ElevenLabs Voice Chat)", description: `Speak now. Stops after ${INACTIVITY_TIMEOUT_MS / 1000}s of silence or manual stop.` });
 
-        mediaRecorderRef.current = new MediaRecorder(stream, { mimeType: 'audio/webm' }); // Opus in WebM is common
+        mediaRecorderRef.current = new MediaRecorder(stream, { mimeType: 'audio/webm' }); 
 
         mediaRecorderRef.current.ondataavailable = (event) => {
           if (event.data.size > 0 && socket.readyState === WebSocket.OPEN) {
-            socket.send(event.data); // Send raw audio blob
+            socket.send(event.data); 
             resetInactivityTimer();
           }
         };
 
         mediaRecorderRef.current.onstop = () => {
           if (isMountedRef.current && socket.readyState === WebSocket.OPEN) {
-            // If API expects an explicit end-of-audio-stream message beyond just stopping data flow
-            // it would be sent here. For now, we assume stopping data + previous EOS is enough.
             console.log("ElevenLabs Conversational: MediaRecorder stopped. User audio stream ended from client side.");
           }
           stream.getTracks().forEach(track => track.stop());
         };
 
-        mediaRecorderRef.current.start(250); // Send audio chunks every 250ms
+        mediaRecorderRef.current.start(250); 
         resetInactivityTimer();
       };
 
@@ -224,29 +209,29 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
           const data = JSON.parse(event.data as string);
           console.log("ElevenLabs Conversational: Received message:", data);
 
-          // NOTE: The message structure from Conversational API needs to be handled according to its documentation.
+          // IMPORTANT: The message structure from Conversational API needs to be handled according to its documentation.
           // This is a placeholder for handling user's transcript.
-          if (data.type === "user_transcript" || data.transcript) { // Assuming a type field or direct transcript
-            const transcriptText = data.transcript || (data.payload && data.payload.text);
+          // Common fields might be 'type', 'transcript', 'is_final', 'text', 'payload.text'.
+          if (data.type === "user_transcript" || data.transcript || (data.payload && data.payload.text) ) { 
+            const transcriptText = data.transcript || (data.payload && data.payload.text) || data.text;
             if (transcriptText) {
-              if (data.is_final || data.final) { // Assuming a flag for final transcript
+              if (data.is_final || data.final || data.type === "final_transcript") { 
                 accumulatedTranscript.current += transcriptText + " ";
                 if(isMountedRef.current) setCurrentMessage(accumulatedTranscript.current.trim());
-                // Final transcript part received, call onTranscriptionComplete
                 if (onTranscriptionComplete && accumulatedTranscript.current.trim()) {
                     onTranscriptionComplete(accumulatedTranscript.current.trim());
-                    accumulatedTranscript.current = ''; // Reset for next turn
+                    accumulatedTranscript.current = ''; 
                 }
                 if (inactivityTimerRef.current) clearTimeout(inactivityTimerRef.current);
                  if(isMountedRef.current) setCurrentMessage(''); 
-              } else { // Partial transcript
+              } else { 
                 if(isMountedRef.current) setCurrentMessage(accumulatedTranscript.current + transcriptText);
                 resetInactivityTimer();
               }
             }
           } else if (data.type === "ai_audio_chunk") {
             // TODO: Handle AI audio playback (deferred to a future step)
-            // console.log("ElevenLabs Conversational: Received AI audio chunk (playback not implemented).");
+             console.log("ElevenLabs Conversational: Received AI audio chunk (playback not implemented).");
           } else if (data.type === "error" || data.error) {
             const errorMsg = data.error || (data.message || "Unknown error from Voice Chat API");
             console.warn("ElevenLabs Conversational: Error from WebSocket:", errorMsg);
@@ -254,7 +239,7 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
             if (isMountedRef.current) setCurrentMessage(`Error: ${errorMsg}`);
             stopRecordingInternal(false);
           } else {
-            // console.log("ElevenLabs Conversational: Received unhandled message type:", data.type || "N/A");
+             console.log("ElevenLabs Conversational: Received unhandled message type:", data.type || "N/A", data);
           }
         } catch (e) {
           console.warn("ElevenLabs Conversational: Error parsing WebSocket message or unexpected message format", event.data, e);
@@ -282,7 +267,6 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
         if (!isMountedRef.current) return;
         console.log("ElevenLabs Conversational: WebSocket Closed. Code:", event.code, "Reason:", event.reason || "No reason provided.");
         
-        // Handle potential final transcript if connection closes uncleanly
         if (event.code !== 1000 && accumulatedTranscript.current.trim() && onTranscriptionComplete) {
              if (isMountedRef.current) {
                 onTranscriptionComplete(accumulatedTranscript.current.trim());
