@@ -25,7 +25,6 @@ const USER_AGENT_ID = 'agent_01jwwh679kegrbsv4mmgy96tfe'; // User's provided age
 
 export interface InterviewInputHandle {
   // Methods exposed via ref, if any, can be defined here.
-  // For now, most interaction will be internal or via props.
 }
 
 interface InterviewInputProps {
@@ -67,6 +66,7 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
     return () => {
       isMountedRef.current = false;
       if (socket) {
+        console.log("InterviewInput: Closing WebSocket connection on unmount.");
         socket.close();
       }
       if (mediaRecorder && mediaRecorder.state === "recording") {
@@ -83,7 +83,7 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
     if (!isMountedRef.current) return;
     const newMessage = { ...message, id: crypto.randomUUID(), timestamp: new Date() } as UIChatMessage;
     setChatHistory(prev => [...prev, newMessage]);
-    if (message.role === 'assistant' && !message.audioUrl) { // If AI text comes without immediate audio
+    if (message.role === 'assistant' && !message.audioUrl) {
       setCurrentAssistantMessageId(newMessage.id);
     }
     return newMessage.id;
@@ -100,6 +100,7 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
 
   const playAudio = useCallback((audioBase64: string, messageIdToPlay?: string) => {
     if (!isMountedRef.current || !audioBase64) return;
+    console.log(`InterviewInput: playAudio called for messageId: ${messageIdToPlay || currentAssistantMessageId}, audioBase64 length: ${audioBase64.length}`);
     
     try {
       const byteCharacters = atob(audioBase64);
@@ -108,7 +109,7 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
         byteNumbers[i] = byteCharacters.charCodeAt(i);
       }
       const byteArray = new Uint8Array(byteNumbers);
-      const audioBlob = new Blob([byteArray], { type: 'audio/mpeg' }); // Assuming MP3 from ElevenLabs WebSocket
+      const audioBlob = new Blob([byteArray], { type: 'audio/mpeg' });
       const audioUrl = URL.createObjectURL(audioBlob);
 
       if (!audioPlayerRef.current) {
@@ -126,7 +127,7 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
       }
       
       audioPlayerRef.current.play().catch(e => {
-        console.error("Error playing audio:", e);
+        console.error("InterviewInput: Error playing audio:", e);
         toast({ title: "Audio Playback Error", description: "Could not play AI response.", variant: "destructive" });
         if(activeMessageId) {
           setChatHistory(prev => prev.map(msg => msg.id === activeMessageId ? { ...msg, isPlaying: false } : msg));
@@ -136,15 +137,17 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
 
       audioPlayerRef.current.onended = () => {
         if (!isMountedRef.current) return;
+        console.log(`InterviewInput: Audio playback ended for messageId: ${activeMessageId}`);
         if(activeMessageId) {
           setChatHistory(prev => prev.map(msg => msg.id === activeMessageId ? { ...msg, isPlaying: false } : msg));
         }
         setCurrentPlayingAudioId(null);
-        URL.revokeObjectURL(audioUrl); // Clean up blob URL
+        URL.revokeObjectURL(audioUrl);
       };
-      audioPlayerRef.current.onerror = () => {
+      audioPlayerRef.current.onerror = (e) => {
         if (!isMountedRef.current) return;
-         toast({ title: "Audio Playback Error", description: "Error during audio playback.", variant: "destructive" });
+        console.error(`InterviewInput: Audio playback error for messageId: ${activeMessageId}`, e);
+        toast({ title: "Audio Playback Error", description: "Error during audio playback.", variant: "destructive" });
         if(activeMessageId) {
           setChatHistory(prev => prev.map(msg => msg.id === activeMessageId ? { ...msg, isPlaying: false } : msg));
         }
@@ -153,7 +156,7 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
       };
 
     } catch (error) {
-        console.error("Error processing audio for playback:", error);
+        console.error("InterviewInput: Error processing audio for playback:", error);
         toast({ title: "Audio Processing Error", description: "Could not process AI audio.", variant: "destructive" });
     }
   }, [toast, currentAssistantMessageId]);
@@ -161,23 +164,30 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
 
   const connectWebSocket = useCallback(() => {
     if (!elevenLabsApiKey) {
-      setApiError("ElevenLabs API Key is not configured.");
+      setApiError("ElevenLabs API Key (NEXT_PUBLIC_ELEVENLABS_API_KEY) is not configured in your environment variables.");
       toast({ title: "API Key Missing", description: "ElevenLabs API Key is not configured.", variant: "destructive" });
       return;
     }
-    if (socket && socket.readyState === WebSocket.OPEN) return;
+    if (socket && socket.readyState === WebSocket.OPEN) {
+      console.log("InterviewInput: WebSocket already connected.");
+      return;
+    }
 
     setIsConnecting(true);
     setApiError(null);
-    addMessageToHistory({role: 'system', content: "Connecting to AI Interviewer..."});
+    addMessageToHistory({role: 'system', content: "Attempting to connect to AI Interviewer..."});
+    console.log("InterviewInput: Attempting to connect WebSocket...");
 
     const wsUrl = `wss://api.elevenlabs.io/v1/ws-connect?agent_id=${USER_AGENT_ID}&authorization=${elevenLabsApiKey}`;
+    console.log(`InterviewInput: Connecting to WebSocket URL: ${wsUrl.replace(elevenLabsApiKey, "sk_...")}`); // Log URL without full key
+    
     const newSocket = new WebSocket(wsUrl);
 
     newSocket.onopen = () => {
       if (!isMountedRef.current) return;
       setIsConnecting(false);
       setIsConnected(true);
+      console.log("InterviewInput: WebSocket connection opened successfully.");
       toast({ title: "Connected!", description: "AI Interviewer is ready." });
       addMessageToHistory({role: 'system', content: "Connected to AI Interviewer. You can start by speaking or typing."});
       
@@ -190,68 +200,76 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
         ${parsedData.education?.map(edu => `- Degree: ${edu.degree} from ${edu.institution} (${edu.dates}`).join('\n') || 'Not specified'}
         Please start the interview by asking an opening question based on this resume.
       `;
+      console.log("InterviewInput: Sending initial resume context to agent:", resumeContext);
       newSocket.send(JSON.stringify({ type: "text_input", text: resumeContext }));
-      setCurrentAssistantMessageId(addMessageToHistory({role: 'assistant', content: ""})); // Prepare for AI's first response
+      setCurrentAssistantMessageId(addMessageToHistory({role: 'assistant', content: ""})); 
     };
 
     newSocket.onmessage = (event) => {
       if (!isMountedRef.current) return;
+      console.log("InterviewInput: WebSocket message received:", event.data);
       const data = JSON.parse(event.data as string);
 
       switch (data.type) {
         case 'user_audio_transcribed':
+          console.log("InterviewInput: User audio transcribed:", data.text);
           addMessageToHistory({ role: 'user', content: data.text });
           break;
         case 'ai_response':
-          if(data.text_delta) { // streaming text
+          console.log("InterviewInput: AI response chunk:", data);
+          if(data.text_delta) { 
             if(currentAssistantMessageId) {
               updateAssistantMessageContent(currentAssistantMessageId, data.text_delta)
-            } else { // If no current message ID, start a new one
+            } else { 
               setCurrentAssistantMessageId(addMessageToHistory({role: 'assistant', content: data.text_delta}));
             }
           }
-          if (data.audio_delta) { // streaming audio
+          if (data.audio_delta) { 
              playAudio(data.audio_delta, currentAssistantMessageId);
           }
           if(data.is_finished) {
-             setCurrentAssistantMessageId(null); // Reset for next AI turn
+             console.log("InterviewInput: AI response finished.");
+             setCurrentAssistantMessageId(null); 
           }
           break;
         case 'error':
-          console.error("WebSocket API Error:", data.message);
-          setApiError(`WebSocket Error: ${data.message}`);
-          addMessageToHistory({role: 'system', content: `Error: ${data.message}`});
+          console.error("InterviewInput: WebSocket API Error received from server:", data.message);
+          setApiError(`AI Error: ${data.message}. Please check your ElevenLabs account or agent configuration.`);
+          addMessageToHistory({role: 'system', content: `Error from AI: ${data.message}`});
           toast({ title: "AI Error", description: data.message, variant: "destructive" });
           break;
         default:
-          console.log("WebSocket message:", data);
+          console.log("InterviewInput: Received unknown WebSocket message type:", data);
       }
     };
 
     newSocket.onerror = (error) => {
       if (!isMountedRef.current) return;
-      console.error("WebSocket Error:", error);
+      // This event object doesn't typically contain a detailed error message itself,
+      // it just signals that a connection error occurred. The browser console provides more details.
+      console.error("InterviewInput: WebSocket connection error event:", error);
       setIsConnecting(false);
       setIsConnected(false);
-      setApiError("WebSocket connection error. Please try again.");
-      addMessageToHistory({role: 'system', content: "WebSocket connection error."});
-      toast({ title: "Connection Error", description: "Failed to connect to AI Interviewer.", variant: "destructive" });
+      setApiError("WebSocket connection failed. Check browser console for details (e.g., API key, agent ID, network, or server issues).");
+      addMessageToHistory({role: 'system', content: "WebSocket connection error. Please try reconnecting."});
+      toast({ title: "Connection Error", description: "Failed to connect to AI Interviewer. See console.", variant: "destructive" });
     };
 
     newSocket.onclose = (event) => {
       if (!isMountedRef.current) return;
       setIsConnecting(false);
       setIsConnected(false);
+      console.log(`InterviewInput: WebSocket connection closed. Code: ${event.code}, Reason: ${event.reason}, Clean: ${event.wasClean}`);
       if (event.wasClean) {
         addMessageToHistory({role: 'system', content: "Disconnected from AI Interviewer."});
       } else {
-        setApiError("Connection lost. Please check your internet or try reconnecting.");
-        addMessageToHistory({role: 'system', content: "Connection lost unexpectedly."});
-        toast({ title: "Disconnected", description: "Connection to AI Interviewer lost.", variant: "warning" });
+        setApiError(`Connection lost (Code: ${event.code}). Please check internet or try reconnecting.`);
+        addMessageToHistory({role: 'system', content: `Connection lost unexpectedly. (Code: ${event.code})`});
+        toast({ title: "Disconnected", description: `Connection to AI Interviewer lost. (Code: ${event.code})`, variant: "warning" });
       }
     };
     setSocket(newSocket);
-  }, [elevenLabsApiKey, parsedData, socket, toast, addMessageToHistory, playAudio, updateAssistantMessageContent, currentAssistantMessageId]);
+  }, [elevenLabsApiKey, parsedData, socket, toast, addMessageToHistory, playAudio, updateAssistantMessageContent, currentAssistantMessageId]); // Added missing dependencies
 
   useEffect(() => {
     if (elevenLabsApiKey && parsedData && !socket && !isConnected && !isConnecting) {
@@ -268,21 +286,25 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
     if (showTextInput) setShowTextInput(false);
 
     if (isRecording && mediaRecorder) {
+      console.log("InterviewInput: Stopping MediaRecorder recording.");
       mediaRecorder.stop();
-      // EOS_MESSAGE will be sent in mediaRecorder.onstop
     } else {
       try {
+        console.log("InterviewInput: Requesting microphone access...");
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        console.log("InterviewInput: Microphone access granted.");
         const newMediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
         setMediaRecorder(newMediaRecorder);
         
-        socket.send(BOS_MESSAGE); // Signal start of user audio input
+        console.log("InterviewInput: Sending BOS_MESSAGE (user_input_start).");
+        socket.send(BOS_MESSAGE); 
 
         newMediaRecorder.ondataavailable = (event) => {
           if (event.data.size > 0 && socket && socket.readyState === WebSocket.OPEN) {
             const reader = new FileReader();
             reader.onload = () => {
               const base64Audio = (reader.result as string).split(',')[1];
+              console.log(`InterviewInput: Sending audio_chunk, size: ${base64Audio.length}`);
               socket.send(JSON.stringify({ type: "audio_chunk", data: base64Audio }));
             };
             reader.readAsDataURL(event.data);
@@ -291,33 +313,37 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
 
         newMediaRecorder.onstop = () => {
           if (isMountedRef.current) setIsRecording(false);
-          stream.getTracks().forEach(track => track.stop()); // Release microphone
+          stream.getTracks().forEach(track => track.stop()); 
+          console.log("InterviewInput: MediaRecorder stopped. Sending EOS_MESSAGE (user_input_end).");
           if (socket && socket.readyState === WebSocket.OPEN) {
-             socket.send(EOS_MESSAGE); // Signal end of user audio input
+             socket.send(EOS_MESSAGE); 
           }
-          setCurrentAssistantMessageId(addMessageToHistory({role: 'assistant', content: ""})); // Prepare for AI response
+          setCurrentAssistantMessageId(addMessageToHistory({role: 'assistant', content: ""})); 
         };
         
-        newMediaRecorder.start(500); // Collect audio in 500ms chunks
+        newMediaRecorder.start(500); 
         setIsRecording(true);
+        console.log("InterviewInput: MediaRecorder started.");
       } catch (err) {
-        console.error("Error accessing microphone:", err);
-        toast({ title: "Microphone Error", description: "Could not access microphone.", variant: "destructive" });
+        console.error("InterviewInput: Error accessing microphone:", err);
+        toast({ title: "Microphone Error", description: "Could not access microphone. Check permissions.", variant: "destructive" });
       }
     }
   };
 
   const handleSendText = () => {
     if (!isConnected || !socket || !textInput.trim()) return;
+    console.log("InterviewInput: Sending text input:", textInput);
     socket.send(JSON.stringify({ type: "text_input", text: textInput }));
     addMessageToHistory({ role: 'user', content: textInput });
-    setCurrentAssistantMessageId(addMessageToHistory({role: 'assistant', content: ""})); // Prepare for AI response
+    setCurrentAssistantMessageId(addMessageToHistory({role: 'assistant', content: ""})); 
     if (isMountedRef.current) setTextInput('');
   };
   
   const handleToggleTextInput = () => {
     setShowTextInput(prev => !prev);
-    if (isRecording && mediaRecorder && !showTextInput) { // if switching to text while recording
+    if (isRecording && mediaRecorder && !showTextInput) { 
+      console.log("InterviewInput: Switching to text input, stopping active recording.");
       mediaRecorder.stop();
     }
   };
@@ -340,9 +366,10 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
   }, [textInput, showTextInput]);
 
   const getCardDescription = () => {
-    if (!elevenLabsApiKey) return "ElevenLabs API Key missing. Voice Chat unavailable.";
+    if (!elevenLabsApiKey) return "Voice Chat disabled: ElevenLabs API Key missing.";
     if (isConnecting) return "Connecting to AI Interviewer...";
-    if (!isConnected) return "Disconnected. Attempting to reconnect or check API key.";
+    if (!isConnected && apiError) return `Connection Failed: ${apiError.substring(0,100)}...`;
+    if (!isConnected) return "Disconnected. Attempting to reconnect or check API key / network.";
     if (isRecording) return "Listening...";
     if (currentPlayingAudioId) return "AI is speaking...";
     if (showTextInput) return "Type your response or switch to voice chat.";
@@ -350,6 +377,7 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
   };
 
   const handleFinish = () => {
+    console.log("InterviewInput: Finish Interview clicked.");
     if (socket) {
       socket.close();
       setSocket(null);
@@ -366,7 +394,7 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
       <CardHeader>
         <CardTitle className="text-2xl flex items-center">
           <Sparkles className="mr-2 h-6 w-6 text-primary" />
-          AI Interview Chat (WebSocket)
+          AI Interview Chat
         </CardTitle>
         <CardDescription>
          {getCardDescription()}
@@ -374,11 +402,11 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
         {apiError && (
              <Alert variant="destructive" className="mt-2">
                 <AlertTriangle className="h-4 w-4" />
-                <AlertTitle>Error</AlertTitle>
+                <AlertTitle>Connection or API Error</AlertTitle>
                 <AlertDescription>{apiError}</AlertDescription>
             </Alert>
         )}
-        {!isConnected && !isConnecting && elevenLabsApiKey && (
+        {!isConnected && !isConnecting && elevenLabsApiKey && !apiError && (
           <Button onClick={connectWebSocket} variant="outline" className="mt-2">
             <Zap className="mr-2 h-4 w-4" /> Reconnect
           </Button>
@@ -516,3 +544,4 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
 });
 
 InterviewInput.displayName = "InterviewInput";
+
