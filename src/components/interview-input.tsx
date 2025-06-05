@@ -38,17 +38,20 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
   const isMountedRef = useRef(false);
+  const welcomeMessageAddedRef = useRef(false);
   
   const elevenLabsApiKey = process.env.NEXT_PUBLIC_ELEVENLABS_API_KEY;
 
   const [localChatHistory, setLocalChatHistory] = useState<LocalChatMessage[]>([]);
   const [sessionStarted, setSessionStarted] = useState(false);
+  const [isConnecting, setIsConnecting] = useState(false);
 
   // Always call useConversation - no conditional hooks
   const conversation = useConversation({
     onConnect: () => {
       console.log("Connected to ElevenLabs");
       setSessionStarted(true);
+      setIsConnecting(false);
       setLocalChatHistory(prev => [...prev, {
         id: `sys-connected-${Date.now()}`,
         role: 'system',
@@ -60,6 +63,7 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
     onDisconnect: () => {
       console.log("Disconnected from ElevenLabs");
       setSessionStarted(false);
+      setIsConnecting(false);
       setLocalChatHistory(prev => [...prev, {
         id: `sys-disconnected-${Date.now()}`,
         role: 'system',
@@ -86,6 +90,7 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
     },
     onError: (error: string) => {
       console.error("ElevenLabs error:", error);
+      setIsConnecting(false);
       setLocalChatHistory(prev => [...prev, {
         id: `sys-error-${Date.now()}`,
         role: 'system',
@@ -100,11 +105,13 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
     }
   });
 
+  // Mount effect - only runs once
   useEffect(() => {
     isMountedRef.current = true;
     
-    // Add initial resume context message
-    if (parsedData) {
+    // Add initial welcome message only once
+    if (parsedData && !welcomeMessageAddedRef.current) {
+      welcomeMessageAddedRef.current = true;
       setLocalChatHistory([{
         id: `sys-welcome-${Date.now()}`,
         role: 'system',
@@ -115,14 +122,19 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
 
     return () => {
       isMountedRef.current = false;
+      // Cleanup on unmount
       if (sessionStarted) {
         conversation.endSession();
       }
     };
-  }, [parsedData]); // Only depend on parsedData for the initial setup
+  }, []); // Empty dependency array - only run on mount/unmount
 
   const startSession = async () => {
+    if (isConnecting || sessionStarted) return;
+    
     try {
+      setIsConnecting(true);
+      
       // Request microphone permission first
       await navigator.mediaDevices.getUserMedia({ audio: true });
       
@@ -133,11 +145,17 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
         timestamp: new Date()
       }]);
 
+      // Start with minimal configuration first to test basic connection
+      console.log("Starting session with agent ID:", USER_AGENT_ID);
+      
       await conversation.startSession({
         agentId: USER_AGENT_ID
+        // Remove overrides for now to test basic connection
       });
+      
     } catch (error: any) {
       console.error("Failed to start session:", error);
+      setIsConnecting(false);
       setLocalChatHistory(prev => [...prev, {
         id: `sys-error-start-${Date.now()}`,
         role: 'system',
@@ -155,6 +173,8 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
   const endSession = async () => {
     try {
       await conversation.endSession();
+      setSessionStarted(false);
+      setIsConnecting(false);
       setLocalChatHistory(prev => [...prev, {
         id: `sys-ending-${Date.now()}`,
         role: 'system',
@@ -205,12 +225,28 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
   }
 
   const getStatusMessage = () => {
-    if (conversation.status === 'connecting') return "🔄 Connecting to AI Interviewer...";
-    if (conversation.status === 'connected') {
+    if (isConnecting) return "🔄 Connecting to AI Interviewer...";
+    if (conversation.status === 'connected' && sessionStarted) {
       if (conversation.isSpeaking) return "🎤 AI is speaking - please listen";
       return "👂 AI is listening - please speak";
     }
     return "Click 'Start Interview' to begin your voice conversation";
+  };
+
+  // Display resume summary in the UI
+  const renderResumePreview = () => {
+    if (!parsedData) return null;
+    
+    return (
+      <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+        <h4 className="font-semibold text-blue-900 mb-2">📄 Resume Context Available:</h4>
+        <div className="text-sm text-blue-800 space-y-1">
+          <div><strong>Skills:</strong> {parsedData.skills?.join(', ') || 'Not specified'}</div>
+          <div><strong>Experience:</strong> {parsedData.experience?.length || 0} position(s)</div>
+          <div><strong>Education:</strong> {parsedData.education?.length || 0} degree(s)</div>
+        </div>
+      </div>
+    );
   };
 
   return (
@@ -223,6 +259,7 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
         <CardDescription>
           {getStatusMessage()}
         </CardDescription>
+        {renderResumePreview()}
       </CardHeader>
       
       <CardContent className="flex-grow overflow-hidden p-0">
@@ -268,7 +305,7 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
               </div>
             ))}
             
-            {conversation.status === 'connecting' && (
+            {isConnecting && (
               <div className="flex items-center justify-center space-x-2 mt-4">
                 <Loader2 className="h-5 w-5 animate-spin text-primary" />
                 <p className="text-muted-foreground">Connecting to AI Interviewer...</p>
@@ -283,11 +320,11 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
           {!sessionStarted ? (
             <Button 
               onClick={startSession} 
-              disabled={disabled || conversation.status === 'connecting'}
+              disabled={disabled || isConnecting}
               className="w-full"
               size="lg"
             >
-              {conversation.status === 'connecting' ? (
+              {isConnecting ? (
                 <>
                   <Loader2 className="mr-2 h-5 w-5 animate-spin" />
                   Connecting...
