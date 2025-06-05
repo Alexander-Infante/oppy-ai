@@ -1,4 +1,4 @@
-# **App Name**: ResumeBoost
+# **App Name**: OppyAI
 
 ## Core Features:
 

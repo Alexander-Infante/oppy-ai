@@ -1,4 +1,3 @@
-
 "use client";
 
 import type { ParseResumeInput, ParseResumeOutput } from '@/ai/flows/parse-resume';
@@ -6,7 +5,6 @@ import { parseResume } from '@/ai/flows/parse-resume';
 import type { RewriteResumeInput, RewriteResumeOutput } from '@/ai/flows/rewrite-resume';
 import { rewriteResume } from '@/ai/flows/rewrite-resume';
 import { InterviewInput, type InterviewInputHandle } from '@/components/interview-input';
-import type { ChatMessage as SDKChatMessage } from '@elevenlabs/react';
 import { ResumeUploader } from '@/components/resume-uploader';
 import { ResumeEditor } from '@/components/resume-editor';
 import { Button } from '@/components/ui/button';
@@ -25,7 +23,7 @@ export default function OppyAIClientPage() {
   const [resumeDataUri, setResumeDataUri] = useState<string>('');
 
   const [parsedData, setParsedData] = useState<ParseResumeOutput | null>(null);
-  const [finalInterviewChatHistory, setFinalInterviewChatHistory] = useState<SDKChatMessage[]>([]);
+  const [finalInterviewChatHistory, setFinalInterviewChatHistory] = useState<any[]>([]);
   const [rewrittenResume, setRewrittenResume] = useState<RewriteResumeOutput | null>(null);
 
   const [isLoading, setIsLoading] = useState<boolean>(false);
@@ -36,6 +34,8 @@ export default function OppyAIClientPage() {
   const [progress, setProgress] = useState(0);
   const interviewInputRef = useRef<InterviewInputHandle | null>(null);
   const isMountedRef = useRef(false);
+
+  const elevenLabsApiKey = process.env.NEXT_PUBLIC_ELEVENLABS_API_KEY;
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -52,15 +52,16 @@ export default function OppyAIClientPage() {
       timer = setInterval(() => {
         currentProgressVal += 10;
         if (currentProgressVal > 100) currentProgressVal = 100;
-        setProgress(currentProgressVal);
+        if (isMountedRef.current) setProgress(currentProgressVal);
       }, 200);
     } else {
-      setProgress(100);
+      if (isMountedRef.current) setProgress(100);
     }
     return () => clearInterval(timer);
   }, [isLoading]);
 
   const handleResumeUpload = (file: File, textContent: string, dataUri: string) => {
+    if (!isMountedRef.current) return;
     setResumeFile(file);
     setResumeTextContent(textContent);
     setResumeDataUri(dataUri);
@@ -70,6 +71,7 @@ export default function OppyAIClientPage() {
   };
 
   const handleParseResume = async (dataUri: string) => {
+    if (!isMountedRef.current) return;
     setIsLoading(true);
     setLoadingMessage('Parsing your resume with AI...');
     setError(null);
@@ -92,14 +94,14 @@ export default function OppyAIClientPage() {
     }
   };
 
-  const handleFinishInterview = (interviewChatHistory: SDKChatMessage[]) => {
+  const handleFinishInterview = (interviewChatHistory: Array<{ id: string; role: 'user' | 'assistant' | 'system'; text: string; timestamp: Date }>) => {
     if (!isMountedRef.current) return;
 
     setFinalInterviewChatHistory(interviewChatHistory);
     setCurrentStep('rewrite');
 
     const interviewInsights = interviewChatHistory
-      .filter(msg => msg.role === 'user' || msg.role === 'assistant')
+      .filter(msg => msg.role === 'user' || msg.role === 'assistant') 
       .map(msg => `${msg.role === 'user' ? 'User' : 'AI'}: ${msg.text}`)
       .join('\n\n');
 
@@ -115,6 +117,7 @@ export default function OppyAIClientPage() {
       }
       return;
     }
+    if (!isMountedRef.current) return;
     setIsLoading(true);
     setLoadingMessage('Rewriting your resume based on insights...');
     setError(null);
@@ -140,10 +143,7 @@ export default function OppyAIClientPage() {
   };
 
   const handleStartOver = () => {
-    if (isMountedRef.current) {
-      // SDK in InterviewInput should handle its own cleanup
-    }
-
+    if (!isMountedRef.current) return;
     setCurrentStep('upload');
     setResumeFile(null);
     setResumeTextContent('');
@@ -175,7 +175,7 @@ export default function OppyAIClientPage() {
       );
     }
 
-    if (error && currentStep !== 'interview') { // Keep interview UI even on some errors if parsedData exists
+    if (error && currentStep !== 'interview') { 
       return (
          <Card className="w-full max-w-lg shadow-lg">
           <CardHeader>
@@ -196,23 +196,37 @@ export default function OppyAIClientPage() {
       case 'upload':
         return <ResumeUploader onUpload={handleResumeUpload} disabled={isLoading} />;
       case 'parse':
-        // This state is usually very brief, covered by the main isLoading block
-        return <p>Preparing to parse...</p>;
+        return <p>Preparing to parse...</p>; 
       case 'interview':
-        if (!parsedData) return <p>Error: Parsed data not available for interview. Please <Button variant="link" onClick={handleStartOver}>start over</Button>.</p>;
+        if (!parsedData) return <p>Error: Parsed data not available. Please <Button variant="link" onClick={handleStartOver}>start over</Button>.</p>;
+        if (!elevenLabsApiKey) { 
+          return (
+            <Card className="w-full max-w-2xl shadow-xl">
+              <CardHeader>
+                <CardTitle>AI Interview Chat</CardTitle>
+                <CardDescription>Configuration Error</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <p className="text-destructive">
+                  ElevenLabs API Key is not configured. Please set the NEXT_PUBLIC_ELEVENLABS_API_KEY environment variable.
+                  The AI Interview feature cannot function without it.
+                </p>
+              </CardContent>
+            </Card>
+          );
+        }
         return (
           <div className="w-full max-w-3xl space-y-6">
             <InterviewInput
               ref={interviewInputRef}
               parsedData={parsedData}
               onFinishInterview={handleFinishInterview}
-              disabled={isLoading} // isLoading here refers to parse/rewrite, InterviewInput has its own internal loading
+              disabled={isLoading}
             />
           </div>
         );
       case 'rewrite':
-         // This state is usually very brief, covered by the main isLoading block
-         return <p>Preparing to rewrite...</p>;
+         return <p>Preparing to rewrite...</p>; 
       case 'review':
         if (!rewrittenResume) return <p>Error: Rewritten data not available. Please <Button variant="link" onClick={handleStartOver}>start over</Button>.</p>;
         return (
@@ -237,26 +251,24 @@ export default function OppyAIClientPage() {
 
   const stepIcons: Record<Step, React.ElementType> = {
     upload: Rocket,
-    parse: Loader2, // Represents processing
+    parse: Loader2, 
     interview: MessageSquare,
-    rewrite: Loader2, // Represents processing
-    review: Rocket, // Represents completion/next action
+    rewrite: Loader2, 
+    review: Rocket, 
   };
 
   const CurrentStepIcon = stepIcons[currentStep] || Rocket;
-  // Show step title card unless it's the interview step AND there's no critical error AND parsedData is available (interview card has its own title)
-  // OR if it's a loading state for parse/rewrite.
+  
   const showStepTitleCard =
-    !(currentStep === 'interview' && parsedData && !error) ||
-    (isLoading && (currentStep === 'parse' || currentStep === 'rewrite'));
-
+    !(currentStep === 'interview' && parsedData && !error && elevenLabsApiKey && !isLoading) && 
+    !(isLoading && (currentStep === 'parse' || currentStep === 'rewrite'));
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-center p-4 sm:p-6 md:p-8 bg-gradient-to-br from-background to-muted/30">
       <header className="mb-8 text-center">
         <div className="flex items-center justify-center mb-2">
           <Rocket className="h-12 w-12 text-primary mr-3" />
-          <h1 className="text-4xl font-bold tracking-tight">OppyAI</h1>
+          <h1 className="text-4xl font-bold tracking-tight">Oppy AI</h1>
         </div>
         <p className="text-lg text-muted-foreground">
           AI-powered resume rewriting to help you land your dream job.
@@ -264,11 +276,11 @@ export default function OppyAIClientPage() {
       </header>
 
       <main className="w-full flex flex-col items-center">
-        {showStepTitleCard && ! (isLoading && (currentStep === 'parse' || currentStep === 'rewrite')) && (
+        {showStepTitleCard && (
             <Card className="w-full max-w-md mb-6 shadow-md">
                 <CardHeader>
                     <CardTitle className="text-xl text-center flex items-center justify-center">
-                        <CurrentStepIcon className={`mr-2 h-6 w-6 ${currentStep === 'parse' || currentStep === 'rewrite' ? (isLoading ? 'animate-spin' : '') : ''}`} />
+                        <CurrentStepIcon className={`mr-2 h-6 w-6 ${ (currentStep === 'parse' || currentStep === 'rewrite') && isLoading ? 'animate-spin' : ''}`} />
                         {stepTitles[currentStep]}
                     </CardTitle>
                 </CardHeader>
@@ -278,7 +290,7 @@ export default function OppyAIClientPage() {
       </main>
 
       <footer className="mt-12 text-center text-sm text-muted-foreground">
-        <p>&copy; {new Date().getFullYear()} OppyAI. All rights reserved.</p>
+        <p>&copy; {new Date().getFullYear()} Oppy AI. All rights reserved.</p>
         <p>Powered by Genkit and Next.js</p>
       </footer>
     </div>
