@@ -46,7 +46,22 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
   const [sessionStarted, setSessionStarted] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
 
-  // Always call useConversation - no conditional hooks
+  // Create dynamic variables from resume data
+  const createDynamicVariables = (data: ParseResumeOutput) => {
+    return {
+      candidate_skills: data.skills?.join(', ') || 'Not specified',
+      candidate_experience_count: String(data.experience?.length || 0),
+      candidate_education_count: String(data.education?.length || 0),
+      candidate_experience_summary: data.experience?.map(exp => 
+        `${exp.title} at ${exp.company}`
+      ).join(', ') || 'Not specified',
+      candidate_education_summary: data.education?.map(edu => 
+        `${edu.degree} from ${edu.institution}`
+      ).join(', ') || 'Not specified'
+    };
+  };
+
+  // Simple useConversation with no context initially
   const conversation = useConversation({
     onConnect: () => {
       console.log("Connected to ElevenLabs");
@@ -55,10 +70,10 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
       setLocalChatHistory(prev => [...prev, {
         id: `sys-connected-${Date.now()}`,
         role: 'system',
-        text: "🎤 Connected to AI Interviewer. Please speak clearly into your microphone.",
+        text: "🎤 Connected to AI Interviewer with your resume context loaded. The AI can now ask you specific questions about your background. Please speak clearly into your microphone.",
         timestamp: new Date()
       }]);
-      toast({ title: "Connected!", description: "AI Interviewer is ready. Start speaking!" });
+      toast({ title: "Connected!", description: "AI Interviewer is ready with your resume context. Start speaking!" });
     },
     onDisconnect: () => {
       console.log("Disconnected from ElevenLabs");
@@ -115,7 +130,7 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
       setLocalChatHistory([{
         id: `sys-welcome-${Date.now()}`,
         role: 'system',
-        text: "Welcome! I'll be conducting your interview based on your resume. Click 'Start Interview' when you're ready to begin.",
+        text: "Welcome! I'll be conducting your interview based on your resume. The AI interviewer will have access to your skills, experience, and education details. Click 'Start Interview' when you're ready to begin.",
         timestamp: new Date()
       }]);
     }
@@ -141,16 +156,18 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
       setLocalChatHistory(prev => [...prev, {
         id: `sys-starting-${Date.now()}`,
         role: 'system',
-        text: "🔄 Starting interview session...",
+        text: "🔄 Starting interview session with resume context...",
         timestamp: new Date()
       }]);
 
-      // Start with minimal configuration first to test basic connection
-      console.log("Starting session with agent ID:", USER_AGENT_ID);
+      // Create dynamic variables from resume data
+      const dynamicVariables = createDynamicVariables(parsedData);
+      console.log("Starting session with dynamic variables:", dynamicVariables);
       
+      // Start session with dynamic variables
       await conversation.startSession({
-        agentId: USER_AGENT_ID
-        // Remove overrides for now to test basic connection
+        agentId: USER_AGENT_ID,
+        dynamicVariables: dynamicVariables
       });
       
     } catch (error: any) {
@@ -225,12 +242,12 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
   }
 
   const getStatusMessage = () => {
-    if (isConnecting) return "🔄 Connecting to AI Interviewer...";
+    if (isConnecting) return "🔄 Connecting to AI Interviewer with resume context...";
     if (conversation.status === 'connected' && sessionStarted) {
       if (conversation.isSpeaking) return "🎤 AI is speaking - please listen";
-      return "👂 AI is listening - please speak";
+      return "👂 AI is listening - please speak (resume context loaded)";
     }
-    return "Click 'Start Interview' to begin your voice conversation";
+    return "Click 'Start Interview' to begin your voice conversation with resume context";
   };
 
   // Display resume summary in the UI
@@ -238,12 +255,15 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
     if (!parsedData) return null;
     
     return (
-      <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-        <h4 className="font-semibold text-blue-900 mb-2">📄 Resume Context Available:</h4>
-        <div className="text-sm text-blue-800 space-y-1">
-          <div><strong>Skills:</strong> {parsedData.skills?.join(', ') || 'Not specified'}</div>
+      <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-lg">
+        <h4 className="font-semibold text-green-900 mb-2">📄 Resume Context Ready:</h4>
+        <div className="text-sm text-green-800 space-y-1">
+          <div><strong>Skills:</strong> {parsedData.skills?.length ? parsedData.skills.join(', ') : 'Not specified'}</div>
           <div><strong>Experience:</strong> {parsedData.experience?.length || 0} position(s)</div>
           <div><strong>Education:</strong> {parsedData.education?.length || 0} degree(s)</div>
+        </div>
+        <div className="text-xs text-green-600 mt-2">
+          ✓ This information will be provided to the AI interviewer via dynamic variables
         </div>
       </div>
     );
@@ -308,7 +328,7 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
             {isConnecting && (
               <div className="flex items-center justify-center space-x-2 mt-4">
                 <Loader2 className="h-5 w-5 animate-spin text-primary" />
-                <p className="text-muted-foreground">Connecting to AI Interviewer...</p>
+                <p className="text-muted-foreground">Connecting to AI Interviewer with resume context...</p>
               </div>
             )}
           </div>
@@ -327,12 +347,12 @@ export const InterviewInput = forwardRef<InterviewInputHandle, InterviewInputPro
               {isConnecting ? (
                 <>
                   <Loader2 className="mr-2 h-5 w-5 animate-spin" />
-                  Connecting...
+                  Connecting with Resume Context...
                 </>
               ) : (
                 <>
                   <Mic className="mr-2 h-5 w-5" />
-                  Start Interview
+                  Start Interview with Resume Context
                 </>
               )}
             </Button>
