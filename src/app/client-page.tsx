@@ -8,13 +8,16 @@ import { InterviewInput, type InterviewInputHandle } from '@/components/intervie
 import { ResumeUploader } from '@/components/resume-uploader';
 import { ResumeEditor } from '@/components/resume-editor';
 import { Button } from '@/components/ui/button';
+import type { ScoreResumeInput, ScoreResumeOutput } from '@/ai/flows/score-resume';
+import { scoreResume } from '@/ai/flows/score-resume';
+import { ResumeScoreDisplay } from '@/components/resume-score-display';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
 import { useToast } from '@/hooks/use-toast';
-import { Rocket, Loader2, FileWarning, MessageSquare } from 'lucide-react';
+import { Rocket, Loader2, FileWarning, MessageSquare, Target } from 'lucide-react';
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 
-type Step = 'upload' | 'parse' | 'interview' | 'rewrite' | 'review';
+type Step = 'upload' | 'parse' | 'score' | 'interview' | 'rewrite' | 'review';
 
 export default function OppyAIClientPage() {
   const [currentStep, setCurrentStep] = useState<Step>('upload');
@@ -34,6 +37,8 @@ export default function OppyAIClientPage() {
   const [progress, setProgress] = useState(0);
   const interviewInputRef = useRef<InterviewInputHandle | null>(null);
   const isMountedRef = useRef(false);
+
+  const [scoreData, setScoreData] = useState<ScoreResumeOutput | null>(null);
 
   const elevenLabsApiKey = process.env.NEXT_PUBLIC_ELEVENLABS_API_KEY;
 
@@ -80,8 +85,11 @@ export default function OppyAIClientPage() {
       const result = await parseResume(input);
       if (!isMountedRef.current) return;
       setParsedData(result);
-      setCurrentStep('interview');
-      toast({ title: "Resume Parsed!", description: "Key information extracted. Let's start the AI interview.", variant: "default" });
+      // Change this line - go to score step instead of interview
+      setCurrentStep('score');
+      toast({ title: "Resume Parsed!", description: "Key information extracted. Now analyzing your resume...", variant: "default" });
+      // Call score resume after a brief delay to show the step change
+      setTimeout(() => handleScoreResume(dataUri), 100);
     } catch (e: any) {
       console.error("Error parsing resume:", e);
       if (isMountedRef.current) {
@@ -92,6 +100,42 @@ export default function OppyAIClientPage() {
     } finally {
       if (isMountedRef.current) setIsLoading(false);
     }
+  };
+
+  const handleScoreResume = async (dataUri: string) => {
+    if (!isMountedRef.current) return;
+    setIsLoading(true);
+    setLoadingMessage('Analyzing and scoring your resume with AI...');
+    setError(null);
+    try {
+      const input: ScoreResumeInput = { resumeDataUri: dataUri };
+      const result = await scoreResume(input);
+      if (!isMountedRef.current) return;
+      setScoreData(result);
+      toast({ 
+        title: "Resume Analyzed!", 
+        description: `Your resume scored ${result.overallScore}/100. Review the analysis below.`, 
+        variant: "default" 
+      });
+    } catch (e: any) {
+      console.error("Error scoring resume:", e);
+      if (isMountedRef.current) {
+        setError("Failed to analyze resume. Please try again. " + e.message);
+        toast({ title: "Analysis Failed", description: e.message || "An unknown error occurred.", variant: "destructive" });
+      }
+    } finally {
+      if (isMountedRef.current) setIsLoading(false);
+    }
+  };
+
+  const handleContinueToInterview = () => {
+    if (!isMountedRef.current) return;
+    setCurrentStep('interview');
+    toast({ 
+      title: "Starting AI Interview", 
+      description: "Based on your resume analysis, let's dive deeper with an AI interview.", 
+      variant: "default" 
+    });
   };
 
   const handleFinishInterview = (interviewChatHistory: Array<{ id: string; role: 'user' | 'assistant' | 'system'; text: string; timestamp: Date }>) => {
@@ -149,6 +193,7 @@ export default function OppyAIClientPage() {
     setResumeTextContent('');
     setResumeDataUri('');
     setParsedData(null);
+    setScoreData(null); // Add this line
     setFinalInterviewChatHistory([]);
     setRewrittenResume(null);
     setError(null);
@@ -157,7 +202,8 @@ export default function OppyAIClientPage() {
   };
 
   const renderStepContent = () => {
-    if (isLoading && (currentStep === 'parse' || currentStep === 'rewrite' || (currentStep === 'interview' && !parsedData))) {
+    // Show loading state for parse, score, and rewrite steps
+    if (isLoading && (currentStep === 'parse' || currentStep === 'score' || currentStep === 'rewrite' || (currentStep === 'interview' && !parsedData))) {
       return (
         <Card className="w-full max-w-lg shadow-lg">
           <CardHeader>
@@ -174,7 +220,7 @@ export default function OppyAIClientPage() {
         </Card>
       );
     }
-
+  
     if (error && currentStep !== 'interview') { 
       return (
          <Card className="w-full max-w-lg shadow-lg">
@@ -191,12 +237,28 @@ export default function OppyAIClientPage() {
         </Card>
       );
     }
-
+  
     switch (currentStep) {
       case 'upload':
         return <ResumeUploader onUpload={handleResumeUpload} disabled={isLoading} />;
       case 'parse':
         return <p>Preparing to parse...</p>; 
+      case 'score':
+        // This is the key part - show score results when not loading and scoreData exists
+        if (!scoreData && !isLoading) {
+          return <p>Preparing to analyze resume...</p>;
+        }
+        if (!scoreData) {
+          return null; // Loading state will be shown above
+        }
+        return (
+          <ResumeScoreDisplay 
+            scoreData={scoreData}
+            onContinue={handleContinueToInterview}
+            onStartOver={handleStartOver}
+            disabled={isLoading}
+          />
+        );
       case 'interview':
         if (!parsedData) return <p>Error: Parsed data not available. Please <Button variant="link" onClick={handleStartOver}>start over</Button>.</p>;
         if (!elevenLabsApiKey) { 
@@ -244,14 +306,17 @@ export default function OppyAIClientPage() {
   const stepTitles: Record<Step, string> = {
     upload: 'Upload Your Resume',
     parse: 'Parsing Resume',
+    score: 'Resume Analysis',
     interview: 'AI Interview Chat',
     rewrite: 'Rewriting Your Resume',
     review: 'Review Your New Resume',
   };
+  
 
   const stepIcons: Record<Step, React.ElementType> = {
     upload: Rocket,
     parse: Loader2, 
+    score: Target,
     interview: MessageSquare,
     rewrite: Loader2, 
     review: Rocket, 
@@ -260,8 +325,9 @@ export default function OppyAIClientPage() {
   const CurrentStepIcon = stepIcons[currentStep] || Rocket;
   
   const showStepTitleCard =
-    !(currentStep === 'interview' && parsedData && !error && elevenLabsApiKey && !isLoading) && 
-    !(isLoading && (currentStep === 'parse' || currentStep === 'rewrite'));
+  !(currentStep === 'interview' && parsedData && !error && elevenLabsApiKey && !isLoading) && 
+  !(currentStep === 'score' && scoreData && !isLoading && !error) &&
+  !(isLoading && (currentStep === 'parse' || currentStep === 'score' || currentStep === 'rewrite'));
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-center p-4 sm:p-6 md:p-8 bg-gradient-to-br from-background to-muted/30">
