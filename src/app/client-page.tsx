@@ -55,9 +55,9 @@ type ChatMessage = {
 
 type Step =
   | "upload"
+  | "auth"
   | "parse"
   | "score"
-  | "auth"
   | "interview"
   | "rewrite"
   | "review";
@@ -69,7 +69,9 @@ export default function OppyAIClientPage() {
   const [resumeDataUri, setResumeDataUri] = useState<string>("");
 
   const [parsedData, setParsedData] = useState<ParseResumeOutput | null>(null);
-  const [finalInterviewChatHistory, setFinalInterviewChatHistory] = useState<ChatMessage[]>([]);
+  const [finalInterviewChatHistory, setFinalInterviewChatHistory] = useState<
+    ChatMessage[]
+  >([]);
   const [rewrittenResume, setRewrittenResume] =
     useState<RewriteResumeOutput | null>(null);
 
@@ -94,17 +96,18 @@ export default function OppyAIClientPage() {
     };
   }, []);
 
-  // Check if user is authenticated and move to interview step
+  // Check if user is authenticated and move to parse step
   useEffect(() => {
-    if (user && currentStep === "auth") {
-      setCurrentStep("interview");
+    if (user && currentStep === "auth" && resumeDataUri) {
       toast({
         title: `Welcome ${user.displayName}!`,
-        description: "Let's start your AI interview to create an amazing resume.",
+        description: "Now let's analyze your resume with AI.",
         variant: "default",
       });
+      setCurrentStep("parse");
+      handleParseResume(resumeDataUri);
     }
-  }, [user, currentStep, toast]);
+  }, [user, currentStep, resumeDataUri, toast]);
 
   useEffect(() => {
     let timer: NodeJS.Timeout;
@@ -132,8 +135,14 @@ export default function OppyAIClientPage() {
     setResumeTextContent(textContent);
     setResumeDataUri(dataUri);
     setError(null);
-    setCurrentStep("parse");
-    handleParseResume(dataUri);
+
+    // Show success message and move to auth step
+    toast({
+      title: "Resume Uploaded Successfully!",
+      description: "Please sign in to continue with AI analysis.",
+      variant: "default",
+    });
+    setCurrentStep("auth");
   };
 
   const handleParseResume = async (dataUri: string) => {
@@ -162,7 +171,7 @@ export default function OppyAIClientPage() {
           description: e.message || "An unknown error occurred.",
           variant: "destructive",
         });
-        setCurrentStep("upload");
+        setCurrentStep("auth"); // Go back to auth step since resume is uploaded
       }
     } finally {
       if (isMountedRef.current) setIsLoading(false);
@@ -199,9 +208,9 @@ export default function OppyAIClientPage() {
     }
   };
 
-  const handleContinueToAuth = () => {
+  const handleContinueToInterview = () => {
     if (!isMountedRef.current) return;
-    setCurrentStep("auth");
+    setCurrentStep("interview");
   };
 
   const handleGoogleSignIn = async () => {
@@ -353,23 +362,7 @@ export default function OppyAIClientPage() {
         return (
           <ResumeUploader onUpload={handleResumeUpload} disabled={isLoading} />
         );
-      case "parse":
-        return <p>Preparing to parse...</p>;
-      case "score":
-        if (!scoreData && !isLoading) {
-          return <p>Preparing to analyze resume...</p>;
-        }
-        if (!scoreData) {
-          return null;
-        }
-        return (
-          <ResumeScoreDisplay
-            scoreData={scoreData}
-            onContinue={handleContinueToAuth}
-            onStartOver={handleStartOver}
-            disabled={isLoading}
-          />
-        );
+
       case "auth":
         return (
           <Card className="w-full max-w-md shadow-xl border-2 border-blue-200">
@@ -384,11 +377,17 @@ export default function OppyAIClientPage() {
                 Create Your Account
               </CardTitle>
               <CardDescription className="text-base text-gray-700">
-                Sign up to unlock your personalized AI interview and get your
-                professionally rewritten resume.
+                Sign up to unlock AI resume analysis, personalized interview,
+                and professional rewriting.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
+              <div className="p-3 bg-green-50 rounded-lg border border-green-200">
+                <p className="text-sm text-green-800 text-center">
+                  ✅ Resume uploaded successfully! Sign in to continue.
+                </p>
+              </div>
+
               <Button
                 onClick={handleGoogleSignIn}
                 disabled={isLoading || authLoading}
@@ -430,6 +429,7 @@ export default function OppyAIClientPage() {
                     🚀 What You'll Get:
                   </p>
                   <div className="space-y-1 text-xs">
+                    <p>✅ AI resume parsing and scoring</p>
                     <p>
                       ✅ Personalized AI interview tailored to your experience
                     </p>
@@ -452,6 +452,26 @@ export default function OppyAIClientPage() {
             </CardContent>
           </Card>
         );
+
+      case "parse":
+        return <p>Preparing to parse...</p>;
+
+      case "score":
+        if (!scoreData && !isLoading) {
+          return <p>Preparing to analyze resume...</p>;
+        }
+        if (!scoreData) {
+          return null;
+        }
+        return (
+          <ResumeScoreDisplay
+            scoreData={scoreData}
+            onContinue={handleContinueToInterview}
+            onStartOver={handleStartOver}
+            disabled={isLoading}
+          />
+        );
+
       case "interview":
         if (!parsedData)
           return (
@@ -491,8 +511,10 @@ export default function OppyAIClientPage() {
             />
           </div>
         );
+
       case "rewrite":
         return <p>Preparing to rewrite...</p>;
+
       case "review":
         if (!rewrittenResume)
           return (
@@ -511,6 +533,7 @@ export default function OppyAIClientPage() {
             onStartOver={handleStartOver}
           />
         );
+
       default:
         return (
           <p>
@@ -526,9 +549,9 @@ export default function OppyAIClientPage() {
 
   const stepTitles: Record<Step, string> = {
     upload: "Upload Your Resume",
+    auth: "Create Account to Continue",
     parse: "Parsing Resume",
     score: "Resume Analysis",
-    auth: "Create Account to Continue",
     interview: "AI Interview Chat",
     rewrite: "Rewriting Your Resume",
     review: "Review Your New Resume",
@@ -536,9 +559,9 @@ export default function OppyAIClientPage() {
 
   const stepIcons: Record<Step, React.ElementType> = {
     upload: Rocket,
+    auth: Shield,
     parse: Loader2,
     score: Target,
-    auth: Shield,
     interview: MessageSquare,
     rewrite: Loader2,
     review: Rocket,
