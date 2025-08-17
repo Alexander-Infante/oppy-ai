@@ -374,11 +374,13 @@ export default function OppyAIClientPage() {
                 </div>
               </div>
               <CardTitle className="text-2xl text-blue-900">
-                Create Your Account
+                Your Free Resume
+              </CardTitle>
+              <CardTitle className="text-2xl text-blue-900">
+                Strength Report Is Ready!
               </CardTitle>
               <CardDescription className="text-base text-gray-700">
-                Sign up to unlock AI resume analysis, personalized interview,
-                and professional rewriting.
+                Sign in now to see your score and personalized improvement plan.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
@@ -392,11 +394,15 @@ export default function OppyAIClientPage() {
                 onClick={handleGoogleSignIn}
                 disabled={isLoading || authLoading}
                 size="lg"
-                className="w-full bg-white text-gray-700 border-2 border-gray-300 hover:bg-gray-50 hover:border-blue-300 shadow-lg transition-all duration-200"
+                className="w-full bg-blue-600 text-white border-2 border-blue-600 hover:bg-blue-700 hover:border-blue-700 shadow-lg transition-all duration-200 text-lg font-semibold py-3"
               >
                 <Chrome className="mr-3 h-5 w-5" />
-                Sign Up with Google
+                See My FREE Report
               </Button>
+
+              <p className="text-center text-sm text-gray-600">
+                Sign in with Google to view your AI analysis now.
+              </p>
 
               <div className="grid grid-cols-2 gap-4 mt-6">
                 <div className="p-4 bg-green-50 rounded-lg border border-green-200">
@@ -423,21 +429,43 @@ export default function OppyAIClientPage() {
                 </div>
               </div>
 
-              <div className="mt-6 p-4 bg-gradient-to-r from-purple-50 to-blue-50 rounded-lg border border-purple-200">
+              <div className="mt-6 p-4 bg-gradient-to-r from-green-50 to-blue-50 rounded-lg border border-green-200">
                 <div className="text-sm text-gray-800 space-y-2">
-                  <p className="font-medium text-center text-purple-900">
-                    🚀 What You'll Get:
+                  <p className="font-medium text-center text-green-900 mb-3">
+                    🎯 Get your AI-powered resume score and tailored advice —
+                    then instantly upgrade to a professional rewrite proven to
+                    boost recruiter responses.
                   </p>
-                  <div className="space-y-1 text-xs">
-                    <p>✅ AI resume parsing and scoring</p>
-                    <p>
-                      ✅ Personalized AI interview tailored to your experience
-                    </p>
-                    <p>✅ Professional resume rewrite with industry keywords</p>
-                    <p>✅ ATS optimization to pass automated screening</p>
-                    <p>✅ Save and access your resumes anytime</p>
+                  <div className="space-y-2 text-xs">
+                    <div className="flex items-start space-x-2">
+                      <span className="text-green-600 font-bold">✓</span>
+                      <span>
+                        Know exactly how your resume ranks against other
+                        applicants
+                      </span>
+                    </div>
+                    <div className="flex items-start space-x-2">
+                      <span className="text-green-600 font-bold">✓</span>
+                      <span>
+                        Get a custom action plan to fix gaps instantly
+                      </span>
+                    </div>
+                    <div className="flex items-start space-x-2">
+                      <span className="text-green-600 font-bold">✓</span>
+                      <span>
+                        Upgrade for a pro rewrite that passes ATS and wins
+                        interviews
+                      </span>
+                    </div>
                   </div>
                 </div>
+              </div>
+
+              <div className="mt-4 p-3 bg-blue-50 rounded-lg border border-blue-200">
+                <p className="text-xs text-blue-800 text-center font-medium">
+                  🏆 Trusted by 20,000+ job seekers to improve interview
+                  call-backs
+                </p>
               </div>
 
               <div className="text-center mt-6">
@@ -452,7 +480,6 @@ export default function OppyAIClientPage() {
             </CardContent>
           </Card>
         );
-
       case "parse":
         return <p>Preparing to parse...</p>;
 
