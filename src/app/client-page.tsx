@@ -1,14 +1,18 @@
 "use client";
 
-import type {
-  InterviewInputHandle,
-} from "@/components/interview-input";
+import type { InterviewInputHandle } from "@/components/interview-input";
 import { InterviewInput } from "@/components/interview-input";
 import { ResumeUploader } from "@/components/resume-uploader";
 import { ResumeEditor } from "@/components/resume-editor";
 import { ResumeScoreDisplay } from "@/components/resume-score-display";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { AppHeader } from "@/components/app-header";
 import { AppFooter } from "@/components/app-footer";
 import { LoadingCard } from "@/components/loading-card";
@@ -16,6 +20,7 @@ import { ErrorCard } from "@/components/error-card";
 import { AuthCard } from "@/components/auth-card";
 import { StepTitleCard } from "@/components/step-title-card";
 import { useResumeWorkflow } from "@/hooks/use-resume-workflow";
+import { PaymentCard } from "@/components/payment-card";
 import React, { useEffect, useRef } from "react";
 
 export default function OppyAIClientPage() {
@@ -49,6 +54,7 @@ export default function OppyAIClientPage() {
       handleContinueToInterview,
       handleFinishInterview,
       handleStartOver,
+      handlePaymentSuccess,
     } = workflow;
 
     // Show loading state for parse, score, auth, and rewrite steps
@@ -57,6 +63,7 @@ export default function OppyAIClientPage() {
       (currentStep === "parse" ||
         currentStep === "score" ||
         currentStep === "auth" ||
+        currentStep === "payment" ||
         currentStep === "rewrite" ||
         (currentStep === "interview" && !parsedData))
     ) {
@@ -81,7 +88,7 @@ export default function OppyAIClientPage() {
             authLoading={authLoading}
           />
         );
-        
+
       case "parse":
         return <p>Preparing to parse...</p>;
 
@@ -97,6 +104,14 @@ export default function OppyAIClientPage() {
             scoreData={scoreData}
             onContinue={handleContinueToInterview}
             onStartOver={handleStartOver}
+            disabled={isLoading}
+          />
+        );
+
+      case "payment":
+        return (
+          <PaymentCard
+            onPaymentSuccess={handlePaymentSuccess}
             disabled={isLoading}
           />
         );
@@ -177,10 +192,16 @@ export default function OppyAIClientPage() {
   };
 
   const shouldShowStepTitle = () => {
-    const { currentStep, parsedData, scoreData, error, isLoading, user } = workflow;
-    
+    const { currentStep, parsedData, scoreData, error, isLoading, user } =
+      workflow;
+
     return !(
-      (currentStep === "interview" && parsedData && !error && elevenLabsApiKey && !isLoading && user) ||
+      (currentStep === "interview" &&
+        parsedData &&
+        !error &&
+        elevenLabsApiKey &&
+        !isLoading &&
+        user) ||
       (currentStep === "score" && scoreData && !isLoading && !error) ||
       (currentStep === "auth" && !isLoading && !error) ||
       (isLoading && ["parse", "score", "auth", "rewrite"].includes(currentStep))
@@ -193,7 +214,10 @@ export default function OppyAIClientPage() {
 
       <main className="w-full flex flex-col items-center">
         {shouldShowStepTitle() && (
-          <StepTitleCard currentStep={workflow.currentStep} isLoading={workflow.isLoading} />
+          <StepTitleCard
+            currentStep={workflow.currentStep}
+            isLoading={workflow.isLoading}
+          />
         )}
         {renderStepContent()}
       </main>

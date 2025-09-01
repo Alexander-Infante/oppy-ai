@@ -41,7 +41,7 @@ export function useResumeWorkflow() {
     };
   }, []);
 
-  // Check if user is authenticated and move to parse step
+  // Check if user is authenticated and move to parse step (skip payment for now)
   useEffect(() => {
     if (user && currentStep === "auth" && resumeDataUri) {
       toast({
@@ -175,8 +175,22 @@ export function useResumeWorkflow() {
     }
   };
 
+  // Changed: Now goes to payment instead of interview
   const handleContinueToInterview = () => {
     if (!isMountedRef.current) return;
+    setCurrentStep("payment");
+  };
+
+  // New: Handle payment success and go to interview
+  const handlePaymentSuccess = () => {
+    if (!isMountedRef.current) return;
+    
+    toast({
+      title: "Payment Successful!",
+      description: "You can now proceed with the AI interview.",
+      variant: "default",
+    });
+    
     setCurrentStep("interview");
   };
 
@@ -281,5 +295,6 @@ export function useResumeWorkflow() {
     handleFinishInterview,
     handleRewriteResume,
     handleStartOver,
+    handlePaymentSuccess,
   };
 }
