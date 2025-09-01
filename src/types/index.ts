@@ -10,6 +10,7 @@ export type Step =
   | "auth"
   | "parse"
   | "score"
+  | "payment"
   | "interview"
   | "rewrite"
   | "review";
@@ -19,6 +20,7 @@ export const stepTitles: Record<Step, string> = {
   auth: "Create Account to Continue",
   parse: "Parsing Resume",
   score: "Resume Analysis",
+  payment: "Submit Payment to Continue",
   interview: "AI Interview Chat",
   rewrite: "Rewriting Your Resume",
   review: "Review Your New Resume",
