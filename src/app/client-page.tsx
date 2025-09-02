@@ -27,7 +27,6 @@ export default function OppyAIClientPage() {
   const workflow = useResumeWorkflow();
   const interviewInputRef = useRef<InterviewInputHandle | null>(null);
   const isMountedRef = useRef(false);
-  const elevenLabsApiKey = process.env.NEXT_PUBLIC_ELEVENLABS_API_KEY;
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -128,23 +127,7 @@ export default function OppyAIClientPage() {
             </p>
           );
         if (!user) return <p>Please sign in to continue with the interview.</p>;
-        if (!elevenLabsApiKey) {
-          return (
-            <Card className="w-full max-w-2xl shadow-xl">
-              <CardHeader>
-                <CardTitle>AI Interview Chat</CardTitle>
-                <CardDescription>Configuration Error</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <p className="text-destructive">
-                  ElevenLabs API Key is not configured. Please set the
-                  NEXT_PUBLIC_ELEVENLABS_API_KEY environment variable. The AI
-                  Interview feature cannot function without it.
-                </p>
-              </CardContent>
-            </Card>
-          );
-        }
+        
         return (
           <div className="w-full max-w-3xl space-y-6">
             <InterviewInput
@@ -199,7 +182,6 @@ export default function OppyAIClientPage() {
       (currentStep === "interview" &&
         parsedData &&
         !error &&
-        elevenLabsApiKey &&
         !isLoading &&
         user) ||
       (currentStep === "score" && scoreData && !isLoading && !error) ||
