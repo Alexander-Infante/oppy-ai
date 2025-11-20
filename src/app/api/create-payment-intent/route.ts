@@ -1,10 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import Stripe from 'stripe';
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-  apiVersion: '2025-08-27.basil',
-});
-
 // Define valid amounts (in cents)
 const VALID_AMOUNTS = {
   FULL_PRICE: 5000,    // $50.00
@@ -21,6 +17,21 @@ const DISCOUNT_CODES = {
 
 export async function POST(request: NextRequest) {
   try {
+    // ✅ Initialize Stripe inside the function
+    const stripeSecretKey = process.env.STRIPE_SECRET_KEY;
+    
+    if (!stripeSecretKey) {
+      console.error('STRIPE_SECRET_KEY environment variable is not set');
+      return NextResponse.json(
+        { error: 'Server configuration error' },
+        { status: 500 }
+      );
+    }
+
+    const stripe = new Stripe(stripeSecretKey, {
+      apiVersion: '2025-08-27.basil',
+    });
+
     const { amount, discountCode } = await request.json();
 
     // Validate that the amount is exactly one of our expected values
