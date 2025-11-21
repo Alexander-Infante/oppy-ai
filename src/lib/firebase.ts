@@ -2,9 +2,13 @@ import { initializeApp } from 'firebase/app';
 import { getAuth, GoogleAuthProvider } from 'firebase/auth';
 
 const firebaseConfig = {
-  apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
-  authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
-  projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
+  apiKey: "AIzaSyApl-H2CswjyEF4hkHM25hraxS9LgB3QiI",
+  authDomain: "oppy-resume-rewriter.firebaseapp.com",
+  projectId: "oppy-resume-rewriter",
+  storageBucket: "oppy-resume-rewriter.firebasestorage.app",
+  messagingSenderId: "1062758238859",
+  appId: "1:1062758238859:web:d28dcda90149223d8e628e",
+  measurementId: "G-BE8XNSD2DY"
 };
 
 // Initialize Firebase
